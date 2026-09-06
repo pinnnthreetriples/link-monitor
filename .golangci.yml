@@ -1,0 +1,100 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - cyclop
+    - depguard
+    - dupl
+    - errorlint
+    - funlen
+    - gocritic
+    - gosec
+    - lll
+    - misspell
+    - nilerr
+    - noctx
+    - revive
+    - unconvert
+    - unparam
+    - wrapcheck
+
+  settings:
+    cyclop:
+      max-complexity: 12
+
+    funlen:
+      lines: 60
+      statements: 45
+
+    lll:
+      line-length: 110
+
+    dupl:
+      threshold: 160
+
+    depguard:
+      rules:
+        # The core is pure: no I/O, no transport, no vendor SDKs.
+        core-is-pure:
+          files:
+            - "**/internal/core/**"
+          deny:
+            - pkg: "os/exec"
+              desc: "core must stay pure — run processes from internal/adapters"
+            - pkg: "net"
+              desc: "core must stay pure — networking belongs in internal/adapters"
+            - pkg: "net/http"
+              desc: "core must stay pure — networking belongs in internal/adapters"
+            - pkg: "syscall"
+              desc: "core must stay pure — syscalls belong in internal/adapters"
+            - pkg: "golang.org/x/sys"
+              desc: "core must stay pure — syscalls belong in internal/adapters"
+            - pkg: "golang.org/x/crypto/ssh"
+              desc: "core must stay pure — SSH belongs in internal/adapters/sshx"
+            - pkg: "tailscale.com"
+              desc: "core must stay pure — Tailscale belongs in internal/adapters/tailscale"
+            - pkg: "github.com/pinnnthreetriples/link-monitor/internal/adapters"
+              desc: "core must not depend on adapters — declare an interface instead"
+            - pkg: "github.com/pinnnthreetriples/link-monitor/internal/app"
+              desc: "core must not depend on app"
+            - pkg: "github.com/pinnnthreetriples/link-monitor/internal/ui"
+              desc: "core must not depend on ui"
+
+        # Adapters implement ports; they never reach back up the stack.
+        adapters-do-not-climb:
+          files:
+            - "**/internal/adapters/**"
+          deny:
+            - pkg: "github.com/pinnnthreetriples/link-monitor/internal/app"
+              desc: "adapters must not depend on app"
+            - pkg: "github.com/pinnnthreetriples/link-monitor/internal/ui"
+              desc: "adapters must not depend on ui"
+
+        # The app wires things together but owns no pixels.
+        app-owns-no-pixels:
+          files:
+            - "**/internal/app/**"
+          deny:
+            - pkg: "github.com/pinnnthreetriples/link-monitor/internal/ui"
+              desc: "app must not depend on ui — the UI consumes the app, not the reverse"
+
+  exclusions:
+    rules:
+      # Table-driven tests repeat by nature, and fixtures may be long.
+      - path: _test\.go
+        linters:
+          - dupl
+          - funlen
+          - wrapcheck
+          - gosec
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports

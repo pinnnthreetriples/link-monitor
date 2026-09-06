@@ -1,0 +1,25 @@
+# Build output
+/linkmon.exe
+/build/
+/dist/
+*.exe
+*.syso
+
+# Coverage
+coverage.out
+core.out
+*.cover
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local secrets and state — never commit
+*.pem
+*.key
+id_ed25519*
+.env
+.env.*
+!.env.example
