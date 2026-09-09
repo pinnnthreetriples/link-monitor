@@ -33,20 +33,40 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # bash, not the default pwsh: PowerShell mangles a native argument of the
+      # form -flag=value, so `-coverprofile=coverage.out` never reaches go and
+      # the profile is silently not written. The tests still run and pass, which
+      # is what made it invisible until the floor step below tried to read the
+      # file. Reproduced on windows-latest and locally in both PowerShell 5.1
+      # and pwsh 7; bash on the same runner is correct.
       - name: Test with race detector
+        shell: bash
         run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
 
       # The floor applies to the core only. The UI shell is glue that hollow
       # tests would "cover" without proving anything, so it carries no floor.
+      #
+      # bash for the same reason as the step above, and the floor is asserted
+      # rather than eyeballed: all four pure packages sit at 100 %, so a drop
+      # to 89 % is a decision someone made, and this is where they hear about
+      # it.
       - name: Core coverage floor (90%)
-        shell: pwsh
+        shell: bash
         run: |
+          set -euo pipefail
           go test ./internal/core/... -coverprofile=core.out -covermode=atomic
-          $total = (go tool cover -func=core.out | Select-String 'total:').ToString()
-          if ($total -notmatch '(\d+\.\d+)%') { throw "cannot read coverage from: $total" }
-          $pct = [double]$Matches[1]
-          Write-Host "core coverage: $pct%"
-          if ($pct -lt 90) { throw "core coverage $pct% is below the 90% floor" }
+          total=$(go tool cover -func=core.out | awk '/^total:/ {print $NF}')
+          echo "core coverage: ${total:-<nothing>}"
+          case "$total" in
+            *%) ;;
+            *) echo "cannot read the total out of core.out" >&2; exit 1 ;;
+          esac
+          awk -v pct="${total%\%}" 'BEGIN {
+            if (pct + 0 < 90) {
+              printf "core coverage %s%% is below the 90%% floor\n", pct > "/dev/stderr"
+              exit 1
+            }
+          }'
 
   lint:
     name: lint, format, architecture
