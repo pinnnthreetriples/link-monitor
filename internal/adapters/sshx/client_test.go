@@ -3,6 +3,7 @@ package sshx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
+
+	"github.com/pinnnthreetriples/link-monitor/internal/core"
 )
 
 func TestDialSucceedsWithAKnownHostKey(t *testing.T) {
@@ -107,6 +110,23 @@ func TestDialRejectsAnUnknownHostWhenTrustOnFirstUseIsOff(t *testing.T) {
 	if !strings.Contains(err.Error(), "trust-on-first-use is off") {
 		t.Fatalf("expected the refusal to explain itself, got %v", err)
 	}
+	// An unverified host is its own condition, and above all it is not a
+	// mismatch: nothing contradicts anything here, we have simply never seen
+	// this host before. The diagnosis says two different things about them.
+	var unknown *core.HostKeyUnknownError
+	if !errors.As(err, &unknown) {
+		t.Fatalf("expected a *core.HostKeyUnknownError, got %#v", err)
+	}
+	var mismatch *core.HostKeyMismatchError
+	if errors.As(err, &mismatch) {
+		t.Fatal("an unknown host must never be classified as a changed key")
+	}
+	if unknown.Fingerprint != ssh.FingerprintSHA256(server.hostKey.PublicKey()) {
+		t.Errorf("fingerprint = %q, want the key the server actually offered", unknown.Fingerprint)
+	}
+	if strings.Contains(unknown.Error(), dir) {
+		t.Errorf("the typed error names the known_hosts path: %q", unknown.Error())
+	}
 }
 
 func TestDialRejectsAMissingKnownHostsWhenTrustOnFirstUseIsOff(t *testing.T) {
@@ -185,8 +205,72 @@ func TestTrustOnFirstUseStillRejectsAChangedHostKey(t *testing.T) {
 	if !errors.As(err, &keyErr) || len(keyErr.Want) == 0 {
 		t.Fatalf("expected a knownhosts mismatch, got %v", err)
 	}
+	// A changed key is a mismatch, never an unknown host: the diagnosis gives
+	// it a verdict of its own, and no path in this program offers to accept it.
+	var mismatch *core.HostKeyMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("expected a *core.HostKeyMismatchError, got %#v", err)
+	}
+	var unknown *core.HostKeyUnknownError
+	if errors.As(err, &unknown) {
+		t.Fatal("a changed key must never be classified as an unverified host")
+	}
+	if mismatch.Fingerprint != ssh.FingerprintSHA256(server.hostKey.PublicKey()) {
+		t.Errorf("fingerprint = %q, want the key the server actually offered", mismatch.Fingerprint)
+	}
+	if mismatch.Addr != "127.0.0.1" || mismatch.Port != server.port() {
+		t.Errorf("mismatch = %s:%d, want the destination that answered", mismatch.Addr, mismatch.Port)
+	}
+	if strings.Contains(mismatch.Error(), dir) {
+		t.Errorf("the typed error names the known_hosts path: %q", mismatch.Error())
+	}
 }
 
+// TestDialRejectsARevokedHostKey covers the third thing known_hosts can say,
+// and says plainly what this program does about it: a key marked @revoked is
+// refused, and it is reported as neither of the two typed conditions.
+//
+// That is deliberate rather than an omission. A revocation is a decision
+// somebody already made about that key, not a question about which machine
+// answered, so it does not belong under the mismatch verdict — and inventing a
+// third verdict for a marker this program never writes would be wording nobody
+// has ever read on a screen. The refusal itself is what matters, and it holds.
+func TestDialRejectsARevokedHostKey(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	keyPath, clientPub := writeKeyFile(t, dir, "id_ed25519")
+	server := newSSHServer(t, clientPub)
+
+	path := filepath.Join(dir, "known_hosts")
+	line := "@revoked " + knownhosts.Line(
+		[]string{knownhosts.Normalize(server.addr())}, server.hostKey.PublicKey()) + "\n"
+	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		t.Fatalf("writing known_hosts: %v", err)
+	}
+
+	_, err := Dial(t.Context(), Config{
+		Addr: "127.0.0.1", Port: server.port(), User: "pnj", KeyPath: keyPath,
+		KnownHostsPath: path, TrustOnFirstUse: true, Timeout: 5 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("a revoked host key must be refused")
+	}
+	var revoked *knownhosts.RevokedError
+	if !errors.As(err, &revoked) {
+		t.Fatalf("expected the revocation to survive in the chain, got %v", err)
+	}
+	var mismatch *core.HostKeyMismatchError
+	var unknown *core.HostKeyUnknownError
+	if errors.As(err, &mismatch) || errors.As(err, &unknown) {
+		t.Fatal("a revoked key is neither a mismatch nor an unverified host")
+	}
+}
+
+// TestDialRejectsAnUnauthorizedKey pins the classification the diagnosis
+// depends on: a peer that answers, speaks SSH and then declines our key is a
+// *core.AuthRefusedError and not a connection failure. golang.org/x/crypto/ssh
+// has no type for it, so authfail.go reads the library's own sentence; this test
+// is what notices if that sentence ever changes.
 func TestDialRejectsAnUnauthorizedKey(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -202,8 +286,55 @@ func TestDialRejectsAnUnauthorizedKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the peer to refuse an unauthorized key")
 	}
-	if !strings.Contains(err.Error(), "ssh handshake") {
-		t.Fatalf("expected a handshake error, got %v", err)
+	var refused *core.AuthRefusedError
+	if !errors.As(err, &refused) {
+		t.Fatalf("expected a refused login, got %T: %v", err, err)
+	}
+	if refused.Addr != "127.0.0.1" || refused.Port != server.port() || refused.User != "user" {
+		t.Errorf("refusal = %+v, want the destination and the account it was tried as", refused)
+	}
+	// The message is read by developers and wrapped into logs. It says who
+	// refused whom, and nothing about the key that was offered.
+	for _, secret := range []string{strangerPath, filepath.Base(strangerPath), "PRIVATE KEY"} {
+		if strings.Contains(refused.Error(), secret) {
+			t.Errorf("the refusal names %q; key files stay out of errors", secret)
+		}
+	}
+}
+
+// TestDialDoesNotMistakeANetworkFaultForARefusedKey is the other half of that
+// classification, and the more dangerous half to get wrong: sending the user to
+// edit an authorized-keys file over a connection that never arrived.
+func TestDialDoesNotMistakeANetworkFaultForARefusedKey(t *testing.T) {
+	t.Parallel()
+
+	notARefusal := []error{
+		errors.New("ssh handshake with 100.127.188.87:22: read tcp: connection reset by peer"),
+		errors.New("connecting to 100.127.188.87:22: i/o timeout"),
+		context.DeadlineExceeded,
+		// A host key we do not trust fails inside the same handshake call.
+		&knownhosts.KeyError{},
+		// Wrapped the way our own code wraps, one and two layers deep.
+		fmt.Errorf("ssh handshake with x: %w", errors.New("ssh: handshake failed: ssh: no common algorithm")),
+	}
+	for _, err := range notARefusal {
+		if isAuthRefused(err) {
+			t.Errorf("isAuthRefused(%v) = true; only a refused login may be classified as one", err)
+		}
+	}
+
+	// And the sentences that do mean it, at any depth of wrapping.
+	refusals := []error{
+		errors.New("ssh: unable to authenticate, attempted methods [none publickey], " +
+			"no supported methods remain"),
+		fmt.Errorf("ssh handshake with x: %w",
+			fmt.Errorf("ssh: handshake failed: %w",
+				errors.New("ssh: too many authentication attempts (7), aborting"))),
+	}
+	for _, err := range refusals {
+		if !isAuthRefused(err) {
+			t.Errorf("isAuthRefused(%v) = false, want true", err)
+		}
 	}
 }
 

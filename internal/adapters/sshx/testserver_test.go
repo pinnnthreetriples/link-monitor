@@ -2,7 +2,9 @@ package sshx
 
 import (
 	"bytes"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/pem"
 	"errors"
@@ -13,9 +15,11 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
@@ -44,19 +48,43 @@ type sshServer struct {
 	hostKey  ssh.Signer
 	cfg      *ssh.ServerConfig
 
+	// accepted counts every TCP connection the server took, which is how a test
+	// asserts how many times the client dialled - including attempts whose SSH
+	// handshake then failed.
+	accepted atomic.Int64
+
 	mu             sync.Mutex
 	handler        execHandler
 	rejectForwards bool
-	lastForward    string
+	// rejectSFTP makes the peer refuse the sftp subsystem, the way a host with
+	// no sftp-server installed does.
+	rejectSFTP  bool
+	lastForward string
+	// live holds the connections handshaken so far, so a test can drop them and
+	// see what the client does about it.
+	live []*ssh.ServerConn
 
 	wg sync.WaitGroup
 }
 
-// newSSHServer starts a peer that accepts exactly the given public key.
+// newSSHServer starts a peer that accepts exactly the given public key. It
+// offers one ed25519 host key, the type both real machines are pinned under.
 func newSSHServer(t *testing.T, clientPub ssh.PublicKey) *sshServer {
 	t.Helper()
+	return newSSHServerWithHostKeys(t, clientPub, newSigner(t))
+}
 
-	hostKey := newSigner(t)
+// newSSHServerWithHostKeys starts a peer that offers every one of hostKeys,
+// which is what Windows OpenSSH does: sshd generates ed25519, ecdsa and rsa
+// host keys when it is installed and advertises all of them, leaving the
+// client's preference list to pick one. s.hostKey is the first of them.
+func newSSHServerWithHostKeys(t *testing.T, clientPub ssh.PublicKey, hostKeys ...ssh.Signer) *sshServer {
+	t.Helper()
+	if len(hostKeys) == 0 {
+		t.Fatal("the test server needs at least one host key")
+	}
+
+	hostKey := hostKeys[0]
 	cfg := &ssh.ServerConfig{
 		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			if bytes.Equal(key.Marshal(), clientPub.Marshal()) {
@@ -65,7 +93,9 @@ func newSSHServer(t *testing.T, clientPub ssh.PublicKey) *sshServer {
 			return nil, errors.New("unauthorized key")
 		},
 	}
-	cfg.AddHostKey(hostKey)
+	for _, k := range hostKeys {
+		cfg.AddHostKey(k)
+	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -117,6 +147,30 @@ func (s *sshServer) forwardTarget() string {
 	return s.lastForward
 }
 
+// dials reports how many TCP connections the client has opened to this server.
+func (s *sshServer) dials() int64 { return s.accepted.Load() }
+
+// dropConnections hangs up on every session handshaken so far, the way a peer
+// that reboots or loses its tailnet address does. The listener stays up, so a
+// client that reconnects will get through.
+func (s *sshServer) dropConnections() {
+	s.mu.Lock()
+	conns := s.live
+	s.live = nil
+	s.mu.Unlock()
+
+	for _, conn := range conns {
+		_ = conn.Close() // best effort: the point is only to break the transport
+	}
+}
+
+// closeListener stops the peer answering new connections, without waiting for
+// the sessions already running - which is what makes it usable from inside a
+// handler, where stop would deadlock on its own goroutine.
+func (s *sshServer) closeListener() {
+	_ = s.listener.Close() // best effort: stop will report nothing new
+}
+
 func (s *sshServer) stop() {
 	_ = s.listener.Close() // best effort: the accept loop only needs unblocking
 	s.wg.Wait()
@@ -129,6 +183,7 @@ func (s *sshServer) acceptLoop() {
 		if err != nil {
 			return // the listener was closed by stop
 		}
+		s.accepted.Add(1)
 		s.wg.Add(1)
 		go s.handshake(conn)
 	}
@@ -143,6 +198,10 @@ func (s *sshServer) handshake(raw net.Conn) {
 		return // a rejected client, or a probe that never spoke SSH
 	}
 	defer func() { _ = conn.Close() }()
+
+	s.mu.Lock()
+	s.live = append(s.live, conn)
+	s.mu.Unlock()
 
 	go ssh.DiscardRequests(reqs)
 	for nc := range chans {
@@ -171,19 +230,66 @@ func (s *sshServer) session(nc ssh.NewChannel) {
 	defer func() { _ = ch.Close() }()
 
 	for req := range reqs {
-		if req.Type != "exec" {
-			_ = req.Reply(false, nil) // we only implement exec
-			continue
-		}
-		var payload struct{ Command string }
-		if err := ssh.Unmarshal(req.Payload, &payload); err != nil {
-			_ = req.Reply(false, nil)
+		switch req.Type {
+		case "exec":
+			var payload struct{ Command string }
+			if err := ssh.Unmarshal(req.Payload, &payload); err != nil {
+				_ = req.Reply(false, nil)
+				return
+			}
+			_ = req.Reply(true, nil)
+			s.runExec(ch, payload.Command)
 			return
+		case "subsystem":
+			s.runSubsystem(ch, req)
+			return
+		default:
+			_ = req.Reply(false, nil) // we implement exec and one subsystem
 		}
-		_ = req.Reply(true, nil)
-		s.runExec(ch, payload.Command)
+	}
+}
+
+// runSubsystem answers a "subsystem" request the way Windows OpenSSH does for
+// the one subsystem this program asks for: sftp. The server on the other side
+// of the channel is pkg/sftp's own, serving this process's real filesystem
+// under whatever directory the test points it at, so an SFTP conversation here
+// is a real one rather than a script of canned frames.
+func (s *sshServer) runSubsystem(ch ssh.Channel, req *ssh.Request) {
+	var payload struct{ Name string }
+	if err := ssh.Unmarshal(req.Payload, &payload); err != nil || payload.Name != "sftp" {
+		_ = req.Reply(false, nil)
 		return
 	}
+	s.mu.Lock()
+	refuse := s.rejectSFTP
+	s.mu.Unlock()
+	if refuse {
+		_ = req.Reply(false, nil)
+		return
+	}
+	_ = req.Reply(true, nil)
+
+	server, err := sftp.NewServer(sftpChannel{ch})
+	if err != nil {
+		return
+	}
+	// Serve returns when the client closes its end of the channel, which is
+	// what *sftp.Client.Close does.
+	_ = server.Serve()
+	_ = server.Close()
+}
+
+// sftpChannel makes an ssh.Channel the io.ReadWriteCloser pkg/sftp's server
+// wants. A channel is already all three; the wrapper only names it.
+type sftpChannel struct{ ssh.Channel }
+
+// setRejectSFTP makes the peer refuse the sftp subsystem, the way a host with
+// no sftp-server installed does.
+func (s *sshServer) setRejectSFTP(reject bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.rejectSFTP = reject
 }
 
 func (s *sshServer) runExec(ch ssh.Channel, cmd string) {
@@ -328,6 +434,22 @@ func writeEncryptedKeyFile(t *testing.T, dir, name string, passphrase []byte) (s
 		t.Fatalf("building a signer: %v", err)
 	}
 	return path, signer.PublicKey()
+}
+
+// newECDSASigner makes a fresh ecdsa P-256 signer. Windows OpenSSH generates
+// one of these next to its ed25519 key, and x/crypto/ssh prefers it: that pair
+// of facts is what the host key type tests are about.
+func newECDSASigner(t *testing.T) ssh.Signer {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating an ecdsa key: %v", err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("building an ecdsa signer: %v", err)
+	}
+	return signer
 }
 
 // writeKnownHosts writes a known_hosts naming host with key.

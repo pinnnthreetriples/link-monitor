@@ -12,9 +12,9 @@
 //
 // A service that is not installed is (false, nil) from both boolean calls, not
 // an error: "not installed" is a successful answer, not a failed question.
-// [Client.ServiceInstalled] is what tells the two apart, because they lead the
-// user to different actions — a missing OpenSSH Server asks for an install, a
-// stopped one asks for a start.
+// [Client.LocalServiceInstalled] is what tells the two apart, because they
+// lead the user to different actions — a missing OpenSSH Server asks for an
+// install, a stopped one asks for a start.
 //
 // Errors here are English and machine-matchable; the Russian the user reads is
 // composed upstream from the sentinels [ErrAccessDenied] and [ErrNotInstalled].
@@ -128,8 +128,8 @@ func newWith(ctl controller) *Client {
 // machine. It satisfies the core.Probe method of the same name.
 //
 // A service that is not installed is not running, so that is (false, nil): the
-// question was answered, not refused. Use [Client.ServiceInstalled] when the
-// difference matters.
+// question was answered, not refused. Use [Client.LocalServiceInstalled] when
+// the difference matters.
 func (c *Client) LocalServiceRunning(ctx context.Context, name string) (bool, error) {
 	st, err := c.state(ctx, name)
 	switch {
@@ -141,11 +141,14 @@ func (c *Client) LocalServiceRunning(ctx context.Context, name string) (bool, er
 	return st == stateRunning, nil
 }
 
-// ServiceInstalled reports whether the named service exists on this machine at
-// all, running or not. This is the call that separates "не установлен" from
+// LocalServiceInstalled reports whether the named service exists on this
+// machine at all, running or not. It satisfies the core.Probe method of the
+// same name.
+//
+// This is the call that separates "не установлен" from
 // "остановлена": the two lead the user to different actions, so it never
 // collapses them into one answer.
-func (c *Client) ServiceInstalled(ctx context.Context, name string) (bool, error) {
+func (c *Client) LocalServiceInstalled(ctx context.Context, name string) (bool, error) {
 	_, err := c.state(ctx, name)
 	switch {
 	case errors.Is(err, ErrNotInstalled):

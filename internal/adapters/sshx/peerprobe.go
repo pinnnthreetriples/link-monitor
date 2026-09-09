@@ -25,7 +25,12 @@ const peerProbeGrace = 6 * time.Second
 
 // peerProbeToken prefixes the one line the probe script prints. It is ASCII and
 // chosen by us, so no display language can change it.
-const peerProbeToken = "LINKMON-PROBE"
+//
+// "Token" here means a marker in a stream of text, not a credential: nothing
+// authenticates with it, it is written to the peer's stdout on purpose and
+// scanned for on the way back, and changing it would break parsing rather
+// than access. gosec matches the name, not the value.
+const peerProbeToken = "LINKMON-PROBE" //nolint:gosec // G101: a marker, not a credential
 
 // The statuses the probe script reports. Numbers, not words: the peer runs a
 // Russian Windows and anything Windows prints is translated.
@@ -49,6 +54,8 @@ const (
 //   - nil - the peer connected.
 //   - *core.BlockedError - a packet filter on the PEER's side refused the
 //     connect (WSAEACCES, 10013).
+//   - *core.PortClosedError - this machine reset the peer's connect: nothing is
+//     listening on the port (WSAECONNREFUSED, 10061).
 //   - *core.TimeoutError - the peer's connect went unanswered.
 //   - a wrapped error - the connect failed for another reason, or the probe
 //     could not be run at all.
@@ -172,6 +179,11 @@ func peerProbeErrno(errno int, localAddr string, port int) error {
 		return &core.BlockedError{Addr: localAddr, Port: port}
 	case wsaETIMEDOUT:
 		return &core.TimeoutError{Addr: localAddr, Port: port}
+	case wsaECONNREFUSED:
+		// Our own stack answered the peer with a reset: this machine is up and
+		// nothing is listening on that port. Classified here as it is for the
+		// outbound direction, so the two rows stay comparable.
+		return &core.PortClosedError{Addr: localAddr, Port: port}
 	}
 	if errno < 0 {
 		return fmt.Errorf("the peer could not connect to %s:%d and reported no error number",

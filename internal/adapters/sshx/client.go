@@ -76,6 +76,9 @@ type Config struct {
 	// this machine in PeerCanReachUs. Zero means DefaultPeerProbeTimeout. It is
 	// separate from Timeout because it bounds work happening on the far side.
 	PeerProbeTimeout time.Duration
+	// DialBackoff is how long Lazy refuses to dial again after a failed
+	// attempt. Zero means DefaultDialBackoff. Dial itself ignores it.
+	DialBackoff time.Duration
 }
 
 // withDefaults returns a copy with the optional fields filled in.
@@ -88,6 +91,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.PeerProbeTimeout <= 0 {
 		c.PeerProbeTimeout = DefaultPeerProbeTimeout
+	}
+	if c.DialBackoff <= 0 {
+		c.DialBackoff = DefaultDialBackoff
 	}
 	return c
 }
@@ -126,6 +132,13 @@ type Client struct {
 // host key against known_hosts. It honours ctx during both the TCP connect and
 // the SSH handshake: a cancelled context tears the socket down instead of
 // leaving the handshake to run to completion.
+//
+// A peer that answers and then declines our key is reported as
+// *core.AuthRefusedError, so callers can tell that apart from a connection that
+// never got anywhere. A key of our own that cannot be loaded at all — the
+// passphrase-protected one on the work PC, most of all — is reported as
+// *core.KeyUnusableError before any packet is sent. Every other failure arrives
+// wrapped as it came.
 func Dial(ctx context.Context, cfg Config) (*Client, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -151,13 +164,25 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 	}
 
 	clientCfg := &ssh.ClientConfig{
-		User:            cfg.User,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: hostKeys,
-		Timeout:         cfg.Timeout,
+		User: cfg.User,
+		Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		// Asking first for the host key types known_hosts pins for this host is
+		// what keeps a healthy multi-key server from looking like a changed
+		// key; hostkeyalgo.go is the whole argument. Empty means the library's
+		// default preference, which is right for a host we have never seen.
+		HostKeyCallback:   hostKeys.verify,
+		HostKeyAlgorithms: hostKeys.algorithms,
+		Timeout:           cfg.Timeout,
 	}
 	conn, err := handshake(dialCtx, raw, cfg.hostPort(), clientCfg)
 	if err != nil {
+		// A refused key is not a failed connection, and the difference is the
+		// whole point of the diagnosis upstream: the socket opened, the peer
+		// spoke SSH, and then it declined us. See authfail.go for how that is
+		// told apart from anything the network did.
+		if isAuthRefused(err) {
+			return nil, authRefused(cfg)
+		}
 		return nil, err
 	}
 	return &Client{conn: conn, cfg: cfg}, nil
@@ -198,32 +223,42 @@ func handshake(ctx context.Context, raw net.Conn, addr string, cc *ssh.ClientCon
 	}
 }
 
-// loadSigner reads and parses the private key. Errors name the key's directory
-// and never the file, and never carry key bytes or the passphrase.
+// loadSigner reads and parses the private key. Every failure comes back as
+// *core.KeyUnusableError, which names the key's *directory* and the condition
+// and nothing else — no file name, no key bytes, no passphrase.
+//
+// The typed error is the point. Until it existed, a key that could not be
+// loaded broke every SSH-dependent check at once and the diagnosis said
+// «Проверку не удалось выполнить — результат неизвестен» about each of them,
+// while *ssh.PassphraseMissingError sat in the error chain saying precisely
+// what was wrong. See keyfail.go for how each condition is recognised.
 func loadSigner(path string, passphrase []byte) (ssh.Signer, error) {
+	dir := filepath.Dir(path)
+
 	blob, err := os.ReadFile(path) //nolint:gosec // the key path is operator-supplied configuration
 	if err != nil {
-		var pathErr *os.PathError
-		if errors.As(err, &pathErr) {
-			// Unwrap so the message keeps the directory but drops the file name.
-			return nil, fmt.Errorf("reading the private key in %s: %w", filepath.Dir(path), pathErr.Err)
-		}
-		return nil, fmt.Errorf("reading the private key in %s: %w", filepath.Dir(path), err)
+		// keyUnusable strips the file name out of the error; see keyfail.go.
+		return nil, keyUnusable(err, dir)
 	}
 	defer zero(blob)
 
-	if len(passphrase) > 0 {
-		signer, perr := ssh.ParsePrivateKeyWithPassphrase(blob, passphrase)
-		if perr != nil {
-			return nil, fmt.Errorf("parsing the encrypted private key in %s: %w", filepath.Dir(path), perr)
+	signer, err := ssh.ParsePrivateKey(blob)
+	if err == nil {
+		return signer, nil
+	}
+	// A passphrase only helps against a key that says it wants one. Trying the
+	// plain parse first also means a passphrase configured for a key that turns
+	// out not to need it is harmless, rather than the failure
+	// ParsePrivateKeyWithPassphrase answers with in that case.
+	var locked *ssh.PassphraseMissingError
+	if errors.As(err, &locked) && len(passphrase) > 0 {
+		signer, decErr := ssh.ParsePrivateKeyWithPassphrase(blob, passphrase)
+		if decErr != nil {
+			return nil, keyUnusable(decErr, dir)
 		}
 		return signer, nil
 	}
-	signer, err := ssh.ParsePrivateKey(blob)
-	if err != nil {
-		return nil, fmt.Errorf("parsing the private key in %s: %w", filepath.Dir(path), err)
-	}
-	return signer, nil
+	return nil, keyUnusable(err, dir)
 }
 
 // zero overwrites b so key material does not sit in a reusable buffer longer

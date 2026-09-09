@@ -30,17 +30,23 @@ var (
 // fakeProbe answers from canned values and records what was asked of it. It
 // touches nothing: no network, no filesystem, no process.
 type fakeProbe struct {
-	up              bool
-	note            string
-	upErr           error
-	latency         time.Duration
-	peerErr         error
-	tcpErr          error
-	serviceUp       bool
-	serviceErr      error
-	localServiceUp  bool
-	localServiceErr error
-	dialBackErr     error
+	up       bool
+	note     string
+	upErr    error
+	presence core.Presence
+	// presenceErr is the daemon refusing to say. The engine then falls back to
+	// the ping, which is what it did before it could ask.
+	presenceErr       error
+	latency           time.Duration
+	peerErr           error
+	tcpErr            error
+	serviceUp         bool
+	serviceErr        error
+	localServiceUp    bool
+	localServiceErr   error
+	localInstalled    bool
+	localInstalledErr error
+	dialBackErr       error
 
 	calls []string
 }
@@ -55,6 +61,11 @@ func (f *fakeProbe) TailscaleUp(_ context.Context) (bool, string, error) {
 func (f *fakeProbe) PeerReachable(_ context.Context, addr string) (time.Duration, error) {
 	f.calls = append(f.calls, "PeerReachable:"+addr)
 	return f.latency, f.peerErr
+}
+
+func (f *fakeProbe) PeerPresence(_ context.Context, peer core.Machine) (core.Presence, error) {
+	f.calls = append(f.calls, "PeerPresence:"+peer.TailnetName)
+	return f.presence, f.presenceErr
 }
 
 func (f *fakeProbe) TCPReachable(_ context.Context, addr string, port int) error {
@@ -72,25 +83,37 @@ func (f *fakeProbe) LocalServiceRunning(_ context.Context, name string) (bool, e
 	return f.localServiceUp, f.localServiceErr
 }
 
+func (f *fakeProbe) LocalServiceInstalled(_ context.Context, name string) (bool, error) {
+	f.calls = append(f.calls, "LocalServiceInstalled:"+name)
+	return f.localInstalled, f.localInstalledErr
+}
+
 func (f *fakeProbe) PeerCanReachUs(_ context.Context, localAddr string, port int) error {
 	f.calls = append(f.calls, fmt.Sprintf("PeerCanReachUs:%s:%d", localAddr, port))
 	return f.dialBackErr
 }
 
 // healthy is the probe of a link with nothing wrong with it — including an
-// OpenSSH server on this side, which is what makes the inbound row provable.
+// OpenSSH server on this side, which is what makes the inbound row provable,
+// and a peer the tailnet reports as connected.
 func healthy() fakeProbe {
 	return fakeProbe{
 		up:             true,
 		note:           "v1.102.3 · 3 узла",
+		presence:       core.PresenceOnline,
 		latency:        12 * time.Millisecond,
 		serviceUp:      true,
 		localServiceUp: true,
+		localInstalled: true,
 	}
 }
 
-// dialBack is the call the peer makes back to us, as the fake records it.
-var dialBack = fmt.Sprintf("PeerCanReachUs:%s:22", laptop.Addr)
+// The calls the fake records for the two questions asked by name, spelled once
+// so a scenario's expectations read as a sequence rather than as formatting.
+var (
+	presence = "PeerPresence:" + workPC.TailnetName
+	dialBack = fmt.Sprintf("PeerCanReachUs:%s:22", laptop.Addr)
+)
 
 type scenario struct {
 	name      string
@@ -111,6 +134,7 @@ func TestRun(t *testing.T) {
 	blocked := &core.BlockedError{Addr: workPC.Addr, Port: sshPort}
 	dialTimeout := &core.TimeoutError{Addr: workPC.Addr, Port: sshPort}
 	pingTimeout := &core.TimeoutError{Addr: workPC.Addr, Port: 0}
+	keyRefusal := refusedByPeer()
 
 	tests := []scenario{
 		{
@@ -123,6 +147,7 @@ func TestRun(t *testing.T) {
 			latency: 12 * time.Millisecond,
 			calls: []string{
 				"TailscaleUp",
+				presence,
 				"PeerReachable:" + workPC.Addr,
 				fmt.Sprintf("TCPReachable:%s:22", workPC.Addr),
 				"ServiceRunning:sshd",
@@ -173,6 +198,7 @@ func TestRun(t *testing.T) {
 			latency:   12 * time.Millisecond,
 			calls: []string{
 				"TailscaleUp",
+				presence,
 				"PeerReachable:" + workPC.Addr,
 				fmt.Sprintf("TCPReachable:%s:22", workPC.Addr),
 				"LocalServiceRunning:sshd",
@@ -197,10 +223,11 @@ func TestRun(t *testing.T) {
 			latency: 12 * time.Millisecond,
 			calls: []string{
 				"TailscaleUp",
+				presence,
 				"PeerReachable:" + workPC.Addr,
 				fmt.Sprintf("TCPReachable:%s:22", workPC.Addr),
-				"LocalServiceRunning:sshd",
 				"ServiceRunning:sshd",
+				"LocalServiceRunning:sshd",
 			},
 		},
 		{
@@ -252,11 +279,15 @@ func TestRun(t *testing.T) {
 			latency:   12 * time.Millisecond,
 			calls: []string{
 				"TailscaleUp",
+				presence,
 				"PeerReachable:" + workPC.Addr,
 				fmt.Sprintf("TCPReachable:%s:22", workPC.Addr),
 			},
 		},
 		{
+			// A peer that does not answer stops the two rows that need a login
+			// to it and nothing else: the kill-switch row is a fact about this
+			// machine, and the short local dial still answers it.
 			name: "peer does not answer in the tunnel",
 			probe: func() fakeProbe {
 				p := healthy()
@@ -266,7 +297,7 @@ func TestRun(t *testing.T) {
 			}(),
 			states: []core.State{
 				core.StateOK, core.StateFail, core.StateFail,
-				core.StateUnknown, core.StateUnknown,
+				core.StateUnknown, core.StateOK,
 			},
 			overall:   core.StateFail,
 			summary:   "Связи нет",
@@ -274,7 +305,9 @@ func TestRun(t *testing.T) {
 			fixes:     []FixID{FixCheckPeerOnline},
 			calls: []string{
 				"TailscaleUp",
+				presence,
 				"PeerReachable:" + workPC.Addr,
+				tcpProbe,
 			},
 		},
 		{
@@ -305,7 +338,7 @@ func TestRun(t *testing.T) {
 				core.StateUnknown, core.StateOK,
 			},
 			overall:   core.StateUnknown,
-			summary:   "Связь установлена",
+			summary:   "Состояние неизвестно",
 			detailHas: []string{"sshd"},
 			latency:   12 * time.Millisecond,
 		},
@@ -313,6 +346,35 @@ func TestRun(t *testing.T) {
 			// The case these machines actually lived through: outbound worked
 			// for hours while this laptop had no OpenSSH Server at all.
 			name: "outbound works but we have no ssh server of our own",
+			probe: func() fakeProbe {
+				p := healthy()
+				p.localServiceUp, p.localInstalled = false, false
+				return p
+			}(),
+			states: []core.State{
+				core.StateOK, core.StateOK, core.StateFail,
+				core.StateOK, core.StateOK,
+			},
+			overall:   core.StateFail,
+			summary:   "Частичная связь",
+			detailHas: []string{"нет вовсе"},
+			fixes:     []FixID{FixInstallSSHServer},
+			latency:   12 * time.Millisecond,
+			calls: []string{
+				"TailscaleUp",
+				presence,
+				"PeerReachable:" + workPC.Addr,
+				fmt.Sprintf("TCPReachable:%s:22", workPC.Addr),
+				"ServiceRunning:sshd",
+				"LocalServiceRunning:sshd",
+				"LocalServiceInstalled:sshd",
+			},
+		},
+		{
+			// The other half of the same row, and the reason it is two rows'
+			// worth of wording: the component is there and the service is
+			// stopped, which is a start and not an install.
+			name: "our own ssh server is installed but stopped",
 			probe: func() fakeProbe {
 				p := healthy()
 				p.localServiceUp = false
@@ -324,16 +386,113 @@ func TestRun(t *testing.T) {
 			},
 			overall:   core.StateFail,
 			summary:   "Частичная связь",
-			detailHas: []string{"SSH-сервер"},
+			detailHas: []string{"установлен, но не запущен"},
 			fixes:     []FixID{FixStartLocalSSHD},
 			latency:   12 * time.Millisecond,
 			calls: []string{
 				"TailscaleUp",
+				presence,
+				"PeerReachable:" + workPC.Addr,
+				fmt.Sprintf("TCPReachable:%s:22", workPC.Addr),
+				"ServiceRunning:sshd",
+				"LocalServiceRunning:sshd",
+				"LocalServiceInstalled:sshd",
+			},
+		},
+		{
+			// And the case where the service manager will not say which of the
+			// two it is: the direction is still proven broken, so the row is a
+			// failure with the weaker sentence and the smaller action.
+			name: "our own server is down and we cannot tell whether it exists",
+			probe: func() fakeProbe {
+				p := healthy()
+				p.localServiceUp = false
+				p.localInstalledErr = errors.New("OpenSCManager: access denied")
+				return p
+			}(),
+			states: []core.State{
+				core.StateOK, core.StateOK, core.StateFail,
+				core.StateOK, core.StateOK,
+			},
+			overall:   core.StateFail,
+			summary:   "Частичная связь",
+			detailHas: []string{"не запущен свой SSH-сервер"},
+			fixes:     []FixID{FixStartLocalSSHD},
+			latency:   12 * time.Millisecond,
+		},
+		{
+			// What the work PC really printed, and printed as "unknown": the
+			// tunnel is up, port 22 answers, and the laptop declines the key
+			// because it is not in administrators_authorized_keys.
+			name: "the peer answers, speaks ssh and refuses our key",
+			probe: func() fakeProbe {
+				p := healthy()
+				p.serviceErr = keyRefusal
+				return p
+			}(),
+			states: []core.State{
+				core.StateOK, core.StateFail, core.StateUnknown,
+				core.StateOK, core.StateOK,
+			},
+			overall:   core.StateFail,
+			summary:   "Ключ не принят",
+			detailHas: []string{"ключ", workPC.TailnetName},
+			fixes:     []FixID{FixAuthorizeKey},
+			latency:   12 * time.Millisecond,
+			calls: []string{
+				"TailscaleUp",
+				presence,
 				"PeerReachable:" + workPC.Addr,
 				fmt.Sprintf("TCPReachable:%s:22", workPC.Addr),
 				"ServiceRunning:sshd",
 				"LocalServiceRunning:sshd",
 			},
+		},
+		{
+			// The same refusal arriving one probe later, when the session that
+			// answered about sshd has died and the redial is declined.
+			name: "the key is refused when the dial-back needs a session",
+			probe: func() fakeProbe {
+				p := healthy()
+				p.dialBackErr = keyRefusal
+				return p
+			}(),
+			states: []core.State{
+				core.StateOK, core.StateFail, core.StateUnknown,
+				core.StateOK, core.StateOK,
+			},
+			overall:   core.StateFail,
+			summary:   "Ключ не принят",
+			detailHas: []string{"ключ"},
+			fixes:     []FixID{FixAuthorizeKey},
+			latency:   12 * time.Millisecond,
+			calls: []string{
+				"TailscaleUp",
+				presence,
+				"PeerReachable:" + workPC.Addr,
+				fmt.Sprintf("TCPReachable:%s:22", workPC.Addr),
+				"ServiceRunning:sshd",
+				"LocalServiceRunning:sshd",
+				dialBack,
+			},
+		},
+		{
+			name: "the port stays silent and the key is refused as well",
+			probe: func() fakeProbe {
+				p := healthy()
+				p.tcpErr = dialTimeout
+				p.serviceErr = keyRefusal
+				return p
+			}(),
+			states: []core.State{
+				core.StateOK, core.StateFail, core.StateUnknown,
+				core.StateOK, core.StateOK,
+			},
+			overall:   core.StateFail,
+			summary:   "Ключ не принят",
+			detailHas: []string{"ключ"},
+			fixes:     []FixID{FixAuthorizeKey},
+			latency:   12 * time.Millisecond,
 		},
 		{
 			name: "the peer cannot dial back: a filter refuses it",
@@ -379,7 +538,7 @@ func TestRun(t *testing.T) {
 				core.StateOK, core.StateOK,
 			},
 			overall:   core.StateUnknown,
-			summary:   "Связь установлена",
+			summary:   "Состояние неизвестно",
 			detailHas: []string{"Обратное подключение"},
 			latency:   12 * time.Millisecond,
 		},
@@ -395,11 +554,12 @@ func TestRun(t *testing.T) {
 				core.StateOK, core.StateOK,
 			},
 			overall:   core.StateUnknown,
-			summary:   "Связь установлена",
+			summary:   "Состояние неизвестно",
 			detailHas: []string{"своего SSH-сервера"},
 			latency:   12 * time.Millisecond,
 			calls: []string{
 				"TailscaleUp",
+				presence,
 				"PeerReachable:" + workPC.Addr,
 				fmt.Sprintf("TCPReachable:%s:22", workPC.Addr),
 				"ServiceRunning:sshd",

@@ -136,7 +136,11 @@ func encodePowerShell(script string) string {
 	units := utf16.Encode([]rune(script))
 	buf := make([]byte, 0, len(units)*2)
 	for _, u := range units {
-		buf = append(buf, byte(u), byte(u>>8))
+		// Splitting one UTF-16 code unit into its two bytes, low first. The
+		// truncation is the whole point: byte(u) is the low half by
+		// definition and byte(u>>8) the high one, and together they lose
+		// nothing.
+		buf = append(buf, byte(u), byte(u>>8)) //nolint:gosec // G115: deliberate byte split
 	}
 	return base64.StdEncoding.EncodeToString(buf)
 }

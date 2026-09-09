@@ -101,7 +101,15 @@ func (c *Client) receiveOne(ctx context.Context, dir, waitingName string) (strin
 	if err != nil {
 		return "", err
 	}
-	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	// dst cannot leave dir. The peer chooses only waitingName, and safeBase has
+	// already refused it if it is empty, "." or "..", contains a separator of
+	// either kind, carries a volume name, or is anything other than its own
+	// filepath.Base — so what reaches freePath is a plain file name, and
+	// freePath only ever filepath.Joins it onto dir. dir itself is the inbox
+	// directory from this machine's own configuration, never from a request.
+	// O_EXCL finishes the job: an existing entry, symlink included, is an
+	// error rather than something to write through.
+	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: see above
 	if err != nil {
 		return "", fmt.Errorf("creating %s: %w", base, err)
 	}

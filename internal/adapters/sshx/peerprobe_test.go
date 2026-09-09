@@ -43,9 +43,10 @@ func peerSays(status, errno int) func(string) execResult {
 }
 
 // TestPeerCanReachUsClassifiesTheFourOutcomes covers the whole contract: the
-// peer connected, a filter on ITS side refused, nothing answered, and the
-// probe failed for some other reason. The numbers are the ones a real Windows
-// host produced for these situations; only the transport is faked.
+// peer connected, a filter on ITS side refused, nothing answered, our own port
+// refused the connect, and the probe failed for some other reason. The numbers
+// are the ones a real Windows host produced for these situations; only the
+// transport is faked.
 func TestPeerCanReachUsClassifiesTheFourOutcomes(t *testing.T) {
 	t.Parallel()
 
@@ -62,7 +63,7 @@ func TestPeerCanReachUsClassifiesTheFourOutcomes(t *testing.T) {
 		"blocked by a filter":      {peerProbeFailed, 10013, "blocked"},
 		"no answer in time":        {peerProbeTimedOut, -1, "timeout"},
 		"stack gave up waiting":    {peerProbeFailed, 10060, "timeout"},
-		"refused":                  {peerProbeFailed, wsaeconnrefused, "other"},
+		"refused":                  {peerProbeFailed, wsaeconnrefused, "closed"},
 		"address does not resolve": {peerProbeFailed, wsahostnotfound, "other"},
 		"failed with no number":    {peerProbeFailed, -1, "other"},
 	}
@@ -74,41 +75,64 @@ func TestPeerCanReachUsClassifiesTheFourOutcomes(t *testing.T) {
 
 			err := client.PeerCanReachUs(t.Context(), "100.124.47.73", 22)
 
-			var blocked *core.BlockedError
-			var timeout *core.TimeoutError
-			switch {
-			case err == nil:
-				assertKind(t, "ok", c.want)
-			case errors.As(err, &blocked):
-				assertKind(t, "blocked", c.want)
-				if blocked.Addr != "100.124.47.73" || blocked.Port != 22 {
-					t.Errorf("the error should name this machine, got %+v", blocked)
-				}
-			case errors.As(err, &timeout):
-				assertKind(t, "timeout", c.want)
-				if timeout.Addr != "100.124.47.73" || timeout.Port != 22 {
-					t.Errorf("the error should name this machine, got %+v", timeout)
-				}
-			default:
-				assertKind(t, "other", c.want)
-			}
+			assertKind(t, peerProbeKind(t, err), c.want)
 		})
+	}
+}
+
+// peerProbeKind names the classification of one probe outcome, and checks in
+// passing that every typed answer names THIS machine — the dial-back is about
+// our address and our port, and a row that quoted the peer's instead would be
+// pointing the user at the wrong end of the link.
+func peerProbeKind(t *testing.T, err error) string {
+	t.Helper()
+
+	const (
+		wantAddr = "100.124.47.73"
+		wantPort = 22
+	)
+	named := func(kind, addr string, port int) string {
+		if addr != wantAddr || port != wantPort {
+			t.Errorf("the %s error should name this machine, got %s:%d", kind, addr, port)
+		}
+		return kind
+	}
+
+	var blocked *core.BlockedError
+	var timeout *core.TimeoutError
+	var closed *core.PortClosedError
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.As(err, &blocked):
+		return named("blocked", blocked.Addr, blocked.Port)
+	case errors.As(err, &closed):
+		return named("closed", closed.Addr, closed.Port)
+	case errors.As(err, &timeout):
+		return named("timeout", timeout.Addr, timeout.Port)
+	default:
+		return "other"
 	}
 }
 
 // TestPeerCanReachUsKeepsTheWinsockNumberInspectable proves an unclassified
 // outcome still carries its number, so a caller never has to read the text.
+//
+// The example is WSAENETUNREACH (10051), a number this program does not
+// classify. It used to be 10061; that one now has a diagnosis of its own —
+// *core.PortClosedError — which is what the case above checks.
 func TestPeerCanReachUsKeepsTheWinsockNumberInspectable(t *testing.T) {
 	t.Parallel()
-	client := peerProbe(t, peerSays(peerProbeFailed, 10061))
+	const wsaenetunreach = 10051
+	client := peerProbe(t, peerSays(peerProbeFailed, wsaenetunreach))
 
 	err := client.PeerCanReachUs(t.Context(), "100.124.47.73", 22)
 	var errno syscall.Errno
 	if !errors.As(err, &errno) {
 		t.Fatalf("expected a syscall.Errno in the chain, got %T: %v", err, err)
 	}
-	if errno != syscall.Errno(10061) {
-		t.Errorf("errno: got %d, want 10061", uint32(errno))
+	if errno != syscall.Errno(wsaenetunreach) {
+		t.Errorf("errno: got %d, want %d", uint32(errno), wsaenetunreach)
 	}
 }
 

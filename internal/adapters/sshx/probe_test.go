@@ -116,8 +116,12 @@ func TestClassifyDialErrorMapsTheOutcomes(t *testing.T) {
 		"bare errno": {
 			opErr(wsaEACCES), "blocked",
 		},
-		"connection refused is not blocked": {
-			opErr(os.NewSyscallError("connectex", syscall.Errno(10061))), "other",
+		// A reset is not a block and not a timeout: the far end is up and
+		// nothing is listening. It used to fall through to "other", which is
+		// how the commonest SSH failure of all came out as «результат
+		// неизвестен» five rows down.
+		"connection refused is a closed port": {
+			opErr(os.NewSyscallError("connectex", syscall.Errno(10061))), "closed",
 		},
 		"i/o timeout": {
 			opErr(os.ErrDeadlineExceeded), "timeout",
@@ -139,9 +143,12 @@ func TestClassifyDialErrorMapsTheOutcomes(t *testing.T) {
 			got := classifyDialError(c.err, "100.127.188.87", 22)
 			var blocked *core.BlockedError
 			var timeout *core.TimeoutError
+			var closed *core.PortClosedError
 			switch {
 			case errors.As(got, &blocked):
 				assertKind(t, "blocked", c.expect)
+			case errors.As(got, &closed):
+				assertKind(t, "closed", c.expect)
 			case errors.As(got, &timeout):
 				assertKind(t, "timeout", c.expect)
 			default:

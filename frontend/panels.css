@@ -1,0 +1,374 @@
+/* Link Monitor — what lives inside the tabs: the machine cards and the link
+   between them, the headline, the 24-hour strip, the check rows, the fixes,
+   the log, the drop zone, transfers, history, key/value lists and toggles,
+   and the narrow-window block that has to stay last in the cascade.
+
+   Buttons, form controls and the page's own context menu are here too rather
+   than in shell.css, where they belong by name: styles.css interleaved them
+   with the panel rules, and the cascade is ordered. Moving them up a file
+   would move them in the cascade, which is a change to the UI, not a tidy-up.
+
+   Third of the three sheets cut out of styles.css; see tokens.css. */
+
+/* ---------- machine cards + link ---------- */
+
+.machines { padding: 20px 16px; display: flex; align-items: flex-start; gap: 10px; }
+
+.node { width: 132px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+
+.node-badge {
+  width: 46px; height: 46px; border-radius: 13px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--tone-bg); color: var(--tone); border: 1px solid var(--tone-ring);
+}
+
+.node-name { font-size: 12.5px; font-weight: 600; text-align: center; word-break: break-word; }
+.node-addr { font-size: 10px; color: var(--faint); margin-top: 3px; text-align: center; }
+.node-state { display: flex; align-items: center; gap: 5px; }
+.node-state span { font-size: 10.5px; color: var(--tone); font-weight: 500; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--tone); flex-shrink: 0; }
+
+.link-col {
+  flex-grow: 1; min-width: 0; padding-top: 14px;
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+}
+.link-top { font-size: 10.5px; color: var(--tone); text-align: center; }
+.link-bottom { font-size: 10.5px; color: var(--faint); text-align: center; }
+.link-track {
+  position: relative; width: 100%; height: 2px;
+  border-radius: 2px; background: var(--tone-ring);
+}
+.link-dot {
+  position: absolute; top: -2px; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--accent);
+  animation: lm-travel 1.15s linear infinite;
+}
+
+@keyframes lm-travel {
+  0%   { left: 0%;   opacity: 0; }
+  18%  { opacity: 1; }
+  82%  { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+
+@keyframes lm-spin { to { transform: rotate(360deg); } }
+.spin { animation: lm-spin 0.9s linear infinite; transform-origin: 50% 50%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .link-dot, .spin { animation: none; }
+}
+
+/* ---------- overall headline ---------- */
+
+.overall {
+  background: var(--tone-bg); border: 1px solid var(--tone-ring);
+  border-radius: 13px; padding: 15px 16px;
+  display: flex; align-items: center; gap: 13px;
+}
+.overall-ico { color: var(--tone); flex-shrink: 0; display: flex; }
+.overall-main { flex-grow: 1; min-width: 0; }
+.overall-title { font-size: 14.5px; font-weight: 600; color: var(--tone); letter-spacing: -0.01em; }
+.overall-sub { font-size: 11.5px; color: var(--dim); margin-top: 3px; }
+.stamp { font-size: 10px; color: var(--faint); text-align: right; flex-shrink: 0; }
+
+/* ---------- 24h history strip ---------- */
+
+.strip {
+  display: flex; gap: 1px; height: 14px; overflow: hidden;
+  border-radius: 5px; background: var(--track);
+  border: 1px solid var(--line);
+}
+.strip-seg { flex: 1 1 0; min-width: 2px; background: var(--tone); }
+.strip-scale {
+  display: flex; justify-content: space-between;
+  font-size: 10px; color: var(--faint); padding: 5px 2px 0;
+}
+.strip-legend { display: flex; gap: 12px; flex-wrap: wrap; padding: 4px 2px 0; }
+.strip-legend span { display: flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--dim); }
+
+/* ---------- rows ---------- */
+
+.row {
+  display: flex; align-items: center; gap: 12px; padding: 11px 13px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 11px;
+}
+.row-ico {
+  width: 31px; height: 31px; border-radius: 9px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--tone-bg); color: var(--tone);
+}
+.row-main { flex-grow: 1; min-width: 0; }
+.row-label { font-size: 13px; font-weight: 500; }
+.row-note { font-size: 10px; color: var(--dim); margin-top: 2px; line-height: 1.4; }
+.row-state { font-size: 12px; font-weight: 500; color: var(--tone); flex-shrink: 0; }
+
+/* ---------- buttons ---------- */
+
+.actions { display: flex; gap: 8px; }
+
+.btn {
+  height: 40px; border-radius: 11px; padding: 0 14px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  cursor: pointer; font: inherit; font-size: 13px; font-weight: 500;
+  background: var(--btn-bg); border: 1px solid var(--line); color: var(--btn-text);
+  transition: filter 0.15s ease;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) { filter: brightness(1.12); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn svg { flex-shrink: 0; }
+
+/* A hint, not a lock: the prototype's dimmed treatment for an action the link
+   is already in. The button stays clickable because pressing it twice is
+   harmless, so it is never aria-disabled. */
+.btn.is-dim { opacity: 0.45; }
+.btn.is-dim:hover { opacity: 0.75; }
+
+.btn-primary {
+  background: var(--accent); border-color: var(--accent); color: #ffffff; font-weight: 600;
+}
+.btn-grow { flex-grow: 1; }
+.btn-sm { height: 34px; font-size: 12px; border-radius: 9px; }
+.btn-square {
+  width: 28px; height: 28px; padding: 0; border-radius: 8px;
+  color: var(--dim); flex-shrink: 0;
+}
+
+/* ---------- fixes ---------- */
+
+.fix {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 13px 14px; display: flex; flex-direction: column; gap: 9px;
+}
+.fix-top { display: flex; align-items: flex-start; gap: 11px; }
+.fix-ico {
+  width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--warn-bg); color: var(--warn);
+}
+.fix-title { font-size: 12.5px; font-weight: 600; }
+.fix-expl { font-size: 11.5px; color: var(--dim); margin-top: 4px; line-height: 1.45; }
+.badge {
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 6px;
+  font-size: 10.5px; font-weight: 500; padding: 3px 7px; border-radius: 6px;
+  background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn-ring);
+}
+
+/* ---------- log ---------- */
+
+.log-row {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 8px 2px; border-bottom: 1px solid var(--line);
+}
+.log-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  background: var(--tone); transform: translateY(-1px);
+}
+.log-time { font-size: 10.5px; color: var(--faint); flex-shrink: 0; width: 38px; }
+.log-text { font-size: 12px; color: var(--dim); flex-grow: 1; line-height: 1.4; }
+
+/* ---------- switch (direction) ---------- */
+
+.switch {
+  display: flex; gap: 3px; padding: 3px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 11px;
+}
+.switch-btn {
+  flex: 1 1 0; height: 38px; border-radius: 8px; border: 0; padding: 0 6px;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 500;
+  background: transparent; color: var(--faint); white-space: nowrap;
+}
+.switch-btn[aria-pressed="true"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+
+/* ---------- drop zone ---------- */
+
+.drop {
+  width: 100%; min-height: 186px; border-radius: 14px;
+  border: 1.5px dashed var(--drop-line); background: var(--drop-bg);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 11px; cursor: pointer; padding: 18px 24px; font: inherit; color: var(--text);
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+.drop:hover { filter: brightness(1.06); }
+.drop.is-over { border-color: var(--accent); background: var(--accent-bg); }
+.drop-ico {
+  width: 54px; height: 54px; border-radius: 15px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-bg); color: var(--accent);
+}
+.drop-title { display: block; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; text-align: center; }
+.drop-sub { display: block; font-size: 11.5px; color: var(--dim); margin-top: 5px; text-align: center; }
+.drop-cmd {
+  font-size: 10px; color: var(--dim); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px;
+  max-width: 100%; overflow-wrap: anywhere; text-align: center;
+}
+
+/* ---------- forms ---------- */
+
+.form { display: flex; flex-direction: column; gap: 9px; padding: 13px 14px; }
+.form-row { display: flex; gap: 8px; align-items: flex-end; }
+.field { display: flex; flex-direction: column; gap: 5px; flex: 1 1 0; min-width: 0; }
+.field label { font-size: 10.5px; color: var(--faint); font-weight: 500; }
+
+.input, .select {
+  height: 34px; border-radius: 9px; padding: 0 10px;
+  background: var(--app); border: 1px solid var(--line); color: var(--text);
+  font: inherit; font-size: 12px; width: 100%; min-width: 0;
+}
+.input.mono, .select.mono { font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; }
+.input::placeholder { color: var(--faint); }
+.input:hover, .select:hover { border-color: var(--drop-line); }
+
+.hint { font-size: 11px; color: var(--dim); line-height: 1.45; }
+
+/* ---------- transfer in progress ---------- */
+
+.xfer { padding: 13px 14px; display: flex; flex-direction: column; gap: 10px; }
+.xfer-top { display: flex; align-items: center; gap: 11px; }
+.xfer-ico {
+  width: 32px; height: 32px; border-radius: 9px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-bg); color: var(--accent);
+}
+.xfer-name { font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.xfer-meta { font-size: 10.5px; color: var(--dim); margin-top: 3px; }
+.xfer-bar { height: 5px; border-radius: 3px; background: var(--track); overflow: hidden; }
+.xfer-fill { height: 5px; border-radius: 3px; background: var(--accent); transition: width 0.12s linear; }
+
+/* ---------- history list (transfers, forwards) ---------- */
+
+.list-row {
+  display: flex; align-items: center; gap: 11px;
+  padding: 9px 2px; border-bottom: 1px solid var(--line);
+}
+.list-ico {
+  width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--tone-bg); color: var(--tone);
+}
+.list-main { flex-grow: 1; min-width: 0; }
+.list-name { font-size: 11.5px; color: var(--text); overflow-wrap: anywhere; }
+.list-note { font-size: 10.5px; color: var(--dim); margin-top: 2px; }
+.list-time { font-size: 10.5px; color: var(--faint); flex-shrink: 0; }
+
+/* ---------- info note ---------- */
+
+.note-card {
+  display: flex; align-items: flex-start; gap: 10px; padding: 12px 13px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 11px;
+}
+.note-ico { color: var(--faint); flex-shrink: 0; display: flex; padding-top: 1px; }
+.note-text { font-size: 11.5px; color: var(--dim); line-height: 1.45; }
+
+.warn-card {
+  display: flex; align-items: flex-start; gap: 11px; padding: 13px 14px;
+  background: var(--warn-bg); border: 1px solid var(--warn-ring); border-radius: 12px;
+}
+.warn-ico { color: var(--warn); flex-shrink: 0; display: flex; padding-top: 1px; }
+.warn-title { font-size: 12.5px; font-weight: 600; color: var(--warn); }
+.warn-text { font-size: 11.5px; color: var(--dim); margin-top: 4px; line-height: 1.45; }
+
+/* ---------- key/value blocks (settings) ---------- */
+
+.kv {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; padding: 4px 14px;
+}
+.kv-row {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 10px 0; border-bottom: 1px solid var(--line);
+}
+.kv-row:last-child { border-bottom: 0; }
+.kv-key { font-size: 12.5px; color: var(--dim); width: 138px; flex-shrink: 0; }
+.kv-val { font-size: 11.5px; flex-grow: 1; min-width: 0; overflow-wrap: anywhere; }
+
+/* ---------- toggles + chips ---------- */
+
+.opt-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 0; border-bottom: 1px solid var(--line);
+}
+.opt-row:last-child { border-bottom: 0; }
+.opt-main { flex-grow: 1; min-width: 0; }
+.opt-title { font-size: 12.5px; font-weight: 500; }
+.opt-note { font-size: 10.5px; color: var(--dim); margin-top: 2px; }
+
+.toggle {
+  width: 40px; height: 23px; border-radius: 12px; flex-shrink: 0;
+  cursor: pointer; border: 0; padding: 0; position: relative;
+  background: var(--track); transition: background 0.18s ease;
+}
+.toggle::after {
+  content: ""; position: absolute; top: 3px; left: 3px;
+  width: 17px; height: 17px; border-radius: 50%; background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28); transition: left 0.18s ease;
+}
+.toggle[aria-pressed="true"] { background: var(--ok); }
+.toggle[aria-pressed="true"]::after { left: 20px; }
+
+.chips { display: flex; gap: 4px; flex-shrink: 0; }
+.chip {
+  min-width: 40px; height: 27px; padding: 0 9px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font: inherit; font-size: 11.5px; font-weight: 500;
+  background: transparent; color: var(--faint); border: 1px solid var(--line);
+  transition: filter 0.15s ease;
+}
+.chip:hover { filter: brightness(1.12); }
+.chip[aria-pressed="true"] { background: var(--accent-bg); color: var(--accent); border-color: var(--accent-bg); }
+
+/* ---------- the editing menu the page draws itself (menu.js) ---------- */
+
+/* The host cannot switch WebView2's context menu on without switching F12 on
+   with it, so it is off and this stands in for it. Nothing here is new: the
+   card's border, radius and shadow, the tabs' selected tint for the active
+   row, the hint's size and colour for the note. */
+.lm-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 178px;
+  padding: 5px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.lm-menu-list { display: flex; flex-direction: column; gap: 1px; }
+
+.lm-menu-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  height: 30px; padding: 0 9px; border-radius: 8px;
+  font-size: 12.5px; color: var(--text); white-space: nowrap; cursor: pointer;
+}
+.lm-menu-item:hover, .lm-menu-item.is-active { background: var(--accent-bg); }
+/* Inside the panel, so the ring is not clipped by its own edge. */
+.lm-menu-item:focus-visible { outline-offset: -2px; }
+
+.lm-menu-item[aria-disabled="true"] { color: var(--faint); cursor: default; }
+.lm-menu-item[aria-disabled="true"]:hover { background: transparent; }
+
+.lm-menu-key { font-size: 10.5px; color: var(--faint); }
+
+/* Only ever present when an item had to explain itself — see menu.js on paste. */
+.lm-menu-note {
+  margin: 5px 1px 1px; padding: 6px 8px 0;
+  border-top: 1px solid var(--line);
+  font-size: 10.5px; line-height: 1.4; color: var(--dim);
+  max-width: 212px; white-space: normal;
+}
+
+/* ---------- keeps the column usable in a narrow window ---------- */
+
+/* Only below the column's own width: at 520px the prototype layout must stand,
+   scrollbar or no scrollbar. */
+@media (max-width: 519px) {
+  .app { padding: 14px; }
+  .machines { flex-direction: column; align-items: stretch; gap: 14px; }
+  .node { width: auto; }
+  .link-col { padding-top: 0; }
+  .kv-key { width: 110px; }
+  .form-row { flex-wrap: wrap; }
+}

@@ -61,8 +61,13 @@ func (c *Client) LocalForward(ctx context.Context, localPort int, remoteHost str
 			localPort, remotePort)
 	}
 
+	// The bind goes through a ListenConfig so that ctx governs it too. That is
+	// the smaller half of the story: a listener returned by ListenConfig is not
+	// tied to the context that created it, and cancelling ctx does not close
+	// it. What actually shuts this forward down when ctx ends is the watcher
+	// goroutine below, which is why both exist.
 	local := net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort))
-	listener, err := net.Listen("tcp", local)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", local)
 	if err != nil {
 		return nil, fmt.Errorf("listening on %s for a forward to %s:%d: %w",
 			local, remoteHost, remotePort, err)

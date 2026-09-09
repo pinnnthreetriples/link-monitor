@@ -21,11 +21,26 @@ var skipDirs = map[string]bool{
 	"node_modules": true,
 	"build":        true,
 	"dist":         true,
-	"frontend":     true,
 }
 
-// TestFileLengths keeps Go files small enough to hold in one's head. A file that
-// outgrows the limit wants splitting; raising the limit is not the fix.
+// skipPaths are trees excluded by where they sit rather than by their name.
+// frontend/fonts holds woff2 binaries: there are no lines in them to count, and
+// counting bytes as if there were would be theatre.
+var skipPaths = map[string]bool{
+	"frontend/fonts": true,
+}
+
+// frontendExts are the front-end sources the rule covers. The rule says
+// "source file", not "Go file", and a stylesheet or a tab module outgrows what
+// fits in one's head exactly the way a package does.
+var frontendExts = map[string]bool{
+	".js":   true,
+	".css":  true,
+	".html": true,
+}
+
+// TestFileLengths keeps source files small enough to hold in one's head. A file
+// that outgrows the limit wants splitting; raising the limit is not the fix.
 func TestFileLengths(t *testing.T) {
 	root := repoRoot(t)
 
@@ -33,19 +48,20 @@ func TestFileLengths(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			rel = path
+		}
 		if d.IsDir() {
-			if skipDirs[d.Name()] {
+			if skipDirs[d.Name()] || skipPaths[filepath.ToSlash(rel)] {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !strings.HasSuffix(path, ".go") {
-			return nil
-		}
 
-		limit := maxSourceLines
-		if strings.HasSuffix(path, "_test.go") {
-			limit = maxTestLines
+		limit := limitFor(rel)
+		if limit == 0 {
+			return nil
 		}
 
 		n, countErr := countLines(path)
@@ -53,10 +69,6 @@ func TestFileLengths(t *testing.T) {
 			return countErr
 		}
 		if n > limit {
-			rel, relErr := filepath.Rel(root, path)
-			if relErr != nil {
-				rel = path
-			}
 			t.Errorf("%s is %d lines, limit is %d — split it", rel, n, limit)
 		}
 		return nil
@@ -64,6 +76,26 @@ func TestFileLengths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("walking the repository: %v", err)
 	}
+}
+
+// limitFor returns the line limit for one file, or 0 for a file the size rule
+// says nothing about. rel is the path relative to the repository root.
+func limitFor(rel string) int {
+	switch {
+	case strings.HasSuffix(rel, "_test.go"):
+		return maxTestLines
+	case strings.HasSuffix(rel, ".go"):
+		return maxSourceLines
+	case isFrontend(rel) && frontendExts[filepath.Ext(rel)]:
+		return maxSourceLines
+	}
+	return 0
+}
+
+// isFrontend answers whether a file belongs to the window's own sources, which
+// is where the front-end extensions are policed and nowhere else.
+func isFrontend(rel string) bool {
+	return strings.HasPrefix(filepath.ToSlash(rel), "frontend/")
 }
 
 func countLines(path string) (int, error) {

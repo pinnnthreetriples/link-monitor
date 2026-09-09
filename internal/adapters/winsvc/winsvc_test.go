@@ -185,7 +185,7 @@ func TestLocalServiceRunning(t *testing.T) {
 // TestMissingAndStoppedAreDifferentAnswers is the distinction the UI is built
 // on: "OpenSSH Server не установлен" asks the user to install it, "служба
 // остановлена" asks them to start it. Both look identical through
-// LocalServiceRunning, so ServiceInstalled must separate them.
+// LocalServiceRunning, so LocalServiceInstalled must separate them.
 func TestMissingAndStoppedAreDifferentAnswers(t *testing.T) {
 	t.Parallel()
 
@@ -199,20 +199,20 @@ func TestMissingAndStoppedAreDifferentAnswers(t *testing.T) {
 		}
 	}
 
-	installed, err := missing.ServiceInstalled(t.Context(), sshdService)
+	installed, err := missing.LocalServiceInstalled(t.Context(), sshdService)
 	if err != nil {
-		t.Fatalf("ServiceInstalled() on a missing service: unexpected error %v", err)
+		t.Fatalf("LocalServiceInstalled() on a missing service: unexpected error %v", err)
 	}
 	if installed {
-		t.Error("ServiceInstalled() = true for a service that is not installed")
+		t.Error("LocalServiceInstalled() = true for a service that is not installed")
 	}
 
-	installed, err = stopped.ServiceInstalled(t.Context(), sshdService)
+	installed, err = stopped.LocalServiceInstalled(t.Context(), sshdService)
 	if err != nil {
-		t.Fatalf("ServiceInstalled() on a stopped service: unexpected error %v", err)
+		t.Fatalf("LocalServiceInstalled() on a stopped service: unexpected error %v", err)
 	}
 	if !installed {
-		t.Error("ServiceInstalled() = false for a service that is installed but stopped")
+		t.Error("LocalServiceInstalled() = false for a service that is installed but stopped")
 	}
 }
 
@@ -257,19 +257,19 @@ func TestServiceInstalled(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := newWith(tc.ctl).ServiceInstalled(t.Context(), sshdService)
+			got, err := newWith(tc.ctl).LocalServiceInstalled(t.Context(), sshdService)
 
 			switch {
 			case tc.wantFail && err == nil:
-				t.Fatalf("ServiceInstalled() = %v, nil; want an error", got)
+				t.Fatalf("LocalServiceInstalled() = %v, nil; want an error", got)
 			case !tc.wantFail && err != nil:
-				t.Fatalf("ServiceInstalled() error = %v, want none", err)
+				t.Fatalf("LocalServiceInstalled() error = %v, want none", err)
 			}
 			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
-				t.Errorf("ServiceInstalled() error = %v, want one wrapping %v", err, tc.wantErr)
+				t.Errorf("LocalServiceInstalled() error = %v, want one wrapping %v", err, tc.wantErr)
 			}
 			if got != tc.want {
-				t.Errorf("ServiceInstalled() = %v, want %v", got, tc.want)
+				t.Errorf("LocalServiceInstalled() = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -371,8 +371,8 @@ func TestBadServiceNamesAreRefusedBeforeAnyCall(t *testing.T) {
 			} else if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
 				t.Errorf("LocalServiceRunning() error = %v, want one wrapping %v", err, tc.wantErr)
 			}
-			if _, err := c.ServiceInstalled(t.Context(), tc.service); err == nil {
-				t.Error("ServiceInstalled() accepted an invalid service name")
+			if _, err := c.LocalServiceInstalled(t.Context(), tc.service); err == nil {
+				t.Error("LocalServiceInstalled() accepted an invalid service name")
 			}
 			if err := c.StartService(t.Context(), tc.service); err == nil {
 				t.Error("StartService() accepted an invalid service name")
@@ -397,8 +397,8 @@ func TestACancelledContextStopsEveryCallBeforeItStarts(t *testing.T) {
 	if _, err := c.LocalServiceRunning(ctx, sshdService); !errors.Is(err, context.Canceled) {
 		t.Errorf("LocalServiceRunning() error = %v, want context.Canceled", err)
 	}
-	if _, err := c.ServiceInstalled(ctx, sshdService); !errors.Is(err, context.Canceled) {
-		t.Errorf("ServiceInstalled() error = %v, want context.Canceled", err)
+	if _, err := c.LocalServiceInstalled(ctx, sshdService); !errors.Is(err, context.Canceled) {
+		t.Errorf("LocalServiceInstalled() error = %v, want context.Canceled", err)
 	}
 	if err := c.StartService(ctx, sshdService); !errors.Is(err, context.Canceled) {
 		t.Errorf("StartService() error = %v, want context.Canceled", err)

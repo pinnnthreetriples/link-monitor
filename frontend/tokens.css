@@ -1,0 +1,216 @@
+/* Link Monitor — the design system: the custom properties, both theme blocks,
+   color-scheme, the base reset, the font stacks and the selection policy.
+   What the rest of the UI is built out of; nothing here draws a component.
+
+   First of the three sheets the original styles.css was cut into, along its
+   own section headers and in its own order: tokens.css, then shell.css, then
+   panels.css. index.html loads them in that order because the cascade depends
+   on it — a rule moved between these files would move in the cascade too. */
+
+/* The palette, lifted from the approved prototype
+   (link-monitor-design/*.dc.html). Do not redesign; adjust tokens only. The
+   components this palette feeds now live in shell.css and panels.css.
+
+   The one deliberate deviation from the prototype hexes is --faint: the
+   prototype values (#646c7c dark, #8a93a3 light) land at ~3.1:1 against the
+   panel, which fails WCAG AA for the 10-11px text that uses them. The tokens
+   below keep the same hue and role at ~4.5:1. The originals are kept in
+   comments so the change is one edit away. */
+
+:root {
+  color-scheme: light;
+
+  --app: #f4f6f9;
+  --panel: #ffffff;
+  --line: #dfe4ec;
+  --track: #dfe4ec;
+
+  --text: #1a1f2a;
+  --dim: #5c6575;
+  --faint: #6e7787;            /* prototype: #8a93a3 */
+
+  --ok: #1f9d63;
+  --ok-bg: rgba(31, 157, 99, 0.10);
+  --ok-ring: rgba(31, 157, 99, 0.26);
+
+  --warn: #b47c15;
+  --warn-bg: rgba(180, 124, 21, 0.10);
+  --warn-ring: rgba(180, 124, 21, 0.26);
+
+  --err: #c93b3b;
+  --err-bg: rgba(201, 59, 59, 0.10);
+  --err-ring: rgba(201, 59, 59, 0.26);
+
+  --off: #767f8f;              /* prototype: #8a93a3 */
+  --off-bg: rgba(138, 147, 163, 0.12);
+  --off-ring: rgba(138, 147, 163, 0.28);
+
+  --accent: #2a86b8;
+  --accent-bg: rgba(42, 134, 184, 0.10);
+
+  --btn-bg: #eef1f6;
+  --btn-text: #1a1f2a;
+
+  --drop-line: #c3cbd8;
+  --drop-bg: rgba(42, 134, 184, 0.035);
+
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 8px 24px rgba(16, 24, 40, 0.07);
+}
+
+/* Dark: the OS preference, unless the user pinned light. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --app: #12151c;
+    --panel: #191d26;
+    --line: #2a303c;
+    --track: #2a303c;
+
+    --text: #e6e9ef;
+    --dim: #8d95a5;
+    --faint: #7f8899;          /* prototype: #646c7c */
+
+    --ok: #3fbf7f;
+    --ok-bg: rgba(63, 191, 127, 0.13);
+    --ok-ring: rgba(63, 191, 127, 0.30);
+
+    --warn: #d9a13a;
+    --warn-bg: rgba(217, 161, 58, 0.13);
+    --warn-ring: rgba(217, 161, 58, 0.30);
+
+    --err: #e05c5c;
+    --err-bg: rgba(224, 92, 92, 0.13);
+    --err-ring: rgba(224, 92, 92, 0.30);
+
+    --off: #7f8899;            /* prototype: #646c7c */
+    --off-bg: rgba(100, 108, 124, 0.13);
+    --off-ring: rgba(100, 108, 124, 0.28);
+
+    --accent: #4aa8d8;
+    --accent-bg: rgba(74, 168, 216, 0.13);
+
+    --btn-bg: #232936;
+    --btn-text: #e6e9ef;
+
+    --drop-line: #39414f;
+    --drop-bg: rgba(74, 168, 216, 0.045);
+
+    --shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.34);
+  }
+}
+
+/* Dark pinned by the sun/moon button, whatever the OS says. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --app: #12151c;
+  --panel: #191d26;
+  --line: #2a303c;
+  --track: #2a303c;
+
+  --text: #e6e9ef;
+  --dim: #8d95a5;
+  --faint: #7f8899;
+
+  --ok: #3fbf7f;
+  --ok-bg: rgba(63, 191, 127, 0.13);
+  --ok-ring: rgba(63, 191, 127, 0.30);
+
+  --warn: #d9a13a;
+  --warn-bg: rgba(217, 161, 58, 0.13);
+  --warn-ring: rgba(217, 161, 58, 0.30);
+
+  --err: #e05c5c;
+  --err-bg: rgba(224, 92, 92, 0.13);
+  --err-ring: rgba(224, 92, 92, 0.30);
+
+  --off: #7f8899;
+  --off-bg: rgba(100, 108, 124, 0.13);
+  --off-ring: rgba(100, 108, 124, 0.28);
+
+  --accent: #4aa8d8;
+  --accent-bg: rgba(74, 168, 216, 0.13);
+
+  --btn-bg: #232936;
+  --btn-text: #e6e9ef;
+
+  --drop-line: #39414f;
+  --drop-bg: rgba(74, 168, 216, 0.045);
+
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.34);
+}
+
+/* Tone helpers: a row picks a tone class, the parts read the variables. */
+.t-ok   { --tone: var(--ok);   --tone-bg: var(--ok-bg);   --tone-ring: var(--ok-ring); }
+.t-warn { --tone: var(--warn); --tone-bg: var(--warn-bg); --tone-ring: var(--warn-ring); }
+.t-err  { --tone: var(--err);  --tone-bg: var(--err-bg);  --tone-ring: var(--err-ring); }
+.t-off  { --tone: var(--off);  --tone-bg: var(--off-bg);  --tone-ring: var(--off-ring); }
+
+* { box-sizing: border-box; }
+
+html, body { background: var(--app); }
+
+body {
+  margin: 0;
+  color: var(--text);
+  font-family: 'Space Grotesk', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono { font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, 'Courier New', monospace; }
+
+a { color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
+a:hover { color: var(--accent); text-decoration: underline; }
+
+/* Keyboard focus must stay obvious — this ring is an accessibility promise, not
+   a browser artefact, so nothing below ever sets `outline: none`. The radius is
+   left to each element: an outline follows the border-radius it already has,
+   and forcing 6px here squared off the tabs and the drop zone while focused. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ---------- an application window, not a web page ---------- */
+
+/* No rubber-band, no pull-to-refresh: a window frame does not bounce. And no
+   horizontal scrollbar — the layout is one 520px column that never has
+   anything to scroll sideways to, so overflow there means a defect, not a
+   view. Long values wrap instead (see .msg and a below). */
+html, body { overscroll-behavior: none; }
+body { overflow-x: hidden; }
+
+/* A native control does not blue-highlight when the mouse is dragged across
+   it, so the window's furniture — buttons, tabs, headings, labels, the drop
+   zone — is not selectable. Everything the user might legitimately copy is
+   given the text back, one class at a time, below. */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Values and sentences: addresses, ports, node names, commands, timestamps,
+   whatever the app said, and every error text. `.mono` covers the
+   machine-readable ones by definition — that is what the class means here. */
+.mono,
+.node-name, .node-addr, .link-top, .link-bottom,
+.overall-title, .overall-sub,
+.banner-title, .banner-text,
+.row-label, .row-note, .row-state,
+.fix-title, .fix-expl,
+.log-time, .log-text,
+.list-name, .list-note, .list-time,
+.kv-key, .kv-val,
+.msg, .hint, .empty, .note-text, .warn-title, .warn-text,
+.input, .select, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}

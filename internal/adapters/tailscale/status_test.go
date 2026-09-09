@@ -310,9 +310,13 @@ func TestBackendNoteRU(t *testing.T) {
 		"NeedsLogin":       "требуется вход",
 		"NeedsMachineAuth": "ожидает подтверждения устройства",
 		"Starting":         "запускается",
-		"NoState":          "состояние неизвестно",
-		"":                 "состояние неизвестно",
-		"Puzzled":          "состояние неизвестно",
+		// A state the daemon names precisely, and the user can act on: another
+		// Windows account's session owns it. It used to read «состояние
+		// неизвестно», which was a shrug rather than an answer.
+		"InUseOtherUser": "занят другим пользователем Windows",
+		"NoState":        "состояние неизвестно",
+		"":               "состояние неизвестно",
+		"Puzzled":        "состояние неизвестно",
 	}
 	for state, want := range tests {
 		if got := backendNoteRU(state); got != want {

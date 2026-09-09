@@ -1,0 +1,16 @@
+# Text files keep LF in the repository and are checked out as LF, not CRLF.
+# Two reasons that matter here: the size gate in tools/gates counts lines, and
+# an sshd authorized-keys file or a PowerShell script with stray CRLF has
+# already cost this project an evening.
+* text=auto eol=lf
+
+# Binary. Never touched, never diffed, never line-ending-converted — a woff2
+# with a single byte changed is a font the window silently fails to draw.
+*.woff2 binary
+*.ico    binary
+*.png    binary
+*.exe    binary
+
+# Generated or vendored output that only clutters a diff.
+linkmon.exe    -diff
+coverage.out   -diff linguist-generated

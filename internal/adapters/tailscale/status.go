@@ -148,6 +148,12 @@ func joinNote(version, state string) string {
 }
 
 // backendNoteRU explains a backend state that is not Running, for the user.
+//
+// InUseOtherUser is here because it is a real condition with a real remedy —
+// another Windows account's session owns the daemon, and the person at the
+// keyboard has to switch to it or log that one out — and it used to fall into
+// the default and be reported as «состояние неизвестно», which is a shrug at a
+// state the daemon named precisely.
 func backendNoteRU(state string) string {
 	switch state {
 	case ipn.Stopped.String():
@@ -158,6 +164,8 @@ func backendNoteRU(state string) string {
 		return "ожидает подтверждения устройства"
 	case ipn.Starting.String():
 		return "запускается"
+	case ipn.InUseOtherUser.String():
+		return "занят другим пользователем Windows"
 	case ipn.NoState.String(), "":
 		return "состояние неизвестно"
 	default:

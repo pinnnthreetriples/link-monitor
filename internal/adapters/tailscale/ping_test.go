@@ -9,6 +9,8 @@ import (
 
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
+
+	"github.com/pinnnthreetriples/link-monitor/internal/core"
 )
 
 func TestPeerReachable(t *testing.T) {
@@ -147,6 +149,67 @@ func TestPeerReachable(t *testing.T) {
 				t.Errorf("sent %d pings, want %d", d.pingN, tc.wantPings)
 			}
 		})
+	}
+}
+
+// TestSilentPeerIsReportedAsATimeout is the seam this adapter owes the
+// diagnosis, and it was missing.
+//
+// core/diagnose asks errors.As for *core.TimeoutError to decide that the peer
+// itself is not answering — that is the branch which says «Вторая машина не
+// отвечает — похоже, она выключена» and offers the advice to go and switch it
+// on. Nothing in this program ever produced that type, so the branch could not
+// be reached in the field: a peer that was simply off came out as an
+// unclassifiable error and the whole run was reported as «unknown».
+//
+// ErrPeerUnreachable stays in the chain because this package's own callers and
+// tests match it, and because it says something the domain type does not: the
+// silence was inside the tunnel, not on a socket.
+func TestSilentPeerIsReportedAsATimeout(t *testing.T) {
+	t.Parallel()
+
+	d := &fakeDaemon{
+		status: runningStatus(t),
+		pingFn: func(_ int, _ netip.Addr, _ tailcfg.PingType) (*ipnstate.PingResult, error) {
+			return &ipnstate.PingResult{Err: "peer is not connected"}, nil
+		},
+	}
+
+	_, err := newTestClient(d, &fakeRunner{}).PeerReachable(context.Background(), workAddr)
+
+	var timedOut *core.TimeoutError
+	if !errors.As(err, &timedOut) {
+		t.Fatalf("error = %T (%v), want it to carry *core.TimeoutError", err, err)
+	}
+	if timedOut.Addr != workAddr {
+		t.Errorf("TimeoutError.Addr = %q, want the peer's address %q", timedOut.Addr, workAddr)
+	}
+	if !errors.Is(err, ErrPeerUnreachable) {
+		t.Errorf("error = %v, want ErrPeerUnreachable still reachable", err)
+	}
+}
+
+// TestABrokenDaemonIsNotATimeout: only silence from the peer is a timeout. A
+// daemon that failed to answer at all is a different fault and must not be
+// dressed up as a peer that is switched off.
+func TestABrokenDaemonIsNotATimeout(t *testing.T) {
+	t.Parallel()
+
+	d := &fakeDaemon{
+		status: runningStatus(t),
+		pingFn: func(_ int, _ netip.Addr, _ tailcfg.PingType) (*ipnstate.PingResult, error) {
+			return nil, errBoom
+		},
+	}
+
+	_, err := newTestClient(d, &fakeRunner{}).PeerReachable(context.Background(), workAddr)
+
+	var timedOut *core.TimeoutError
+	if errors.As(err, &timedOut) {
+		t.Errorf("error = %v, want a broken daemon left unclassified", err)
+	}
+	if !errors.Is(err, errBoom) {
+		t.Errorf("error = %v, want the daemon's own failure kept", err)
 	}
 }
 

@@ -38,6 +38,46 @@ linters:
     dupl:
       threshold: 160
 
+    wrapcheck:
+      # Two exemptions, both narrow on purpose. Everything else — every error
+      # from a package outside this module, and every error from an interface
+      # that is not named here — still has to be wrapped.
+      ignore-sigs:
+        # This key replaces wrapcheck's defaults rather than adding to them,
+        # so the defaults are repeated here. Only the last entry is ours.
+        - .Errorf(
+        - errors.New(
+        - errors.Unwrap(
+        - errors.Join(
+        - .Wrap(
+        - .Wrapf(
+        - .WithMessage(
+        - .WithMessagef(
+        - .WithStack(
+        # ctx.Err() returns one of exactly two sentinels from the standard
+        # library, context.Canceled or context.DeadlineExceeded, and callers
+        # act on them with errors.Is rather than by reading their text. The
+        # three sites are unexported helpers (sshx.Lazy.enter,
+        # tailscale.sleepCtx) whose only callers wrap the result immediately
+        # with the operation and its target, so wrapping inside the helper
+        # would only produce "waiting to connect to host:22: context
+        # canceled: context canceled".
+        - func (context.Context).Err() error
+      ignore-interface-regexps:
+        # app.Probe is a composite: each of its eight methods checks that the
+        # adapter was wired and then delegates, one line, to the injected
+        # interface. Wrapping there would double every message, because
+        # core/diagnose — the only caller — already wraps each probe error
+        # with the question it was asking ("dialing 100.127.188.87:22: %w"),
+        # in the same words the composite would use. The adapters themselves
+        # wrap what they call, so nothing goes unexplained.
+        #
+        # These are the three seams and nothing else: the pattern is anchored,
+        # and it names interfaces rather than a package, so an unwrapped error
+        # from any other call in internal/app is still reported. Note the form
+        # — wrapcheck matches "<package name>.<Interface>", not the import path.
+        - ^app\.(TailnetProbe|RemoteProbe|LocalServiceProbe)$
+
     depguard:
       rules:
         # The core is pure: no I/O, no transport, no vendor SDKs.
@@ -45,6 +85,8 @@ linters:
           files:
             - "**/internal/core/**"
           deny:
+            - pkg: "os"
+              desc: "core must stay pure — the filesystem belongs in internal/adapters"
             - pkg: "os/exec"
               desc: "core must stay pure — run processes from internal/adapters"
             - pkg: "net"
@@ -57,6 +99,8 @@ linters:
               desc: "core must stay pure — syscalls belong in internal/adapters"
             - pkg: "golang.org/x/crypto/ssh"
               desc: "core must stay pure — SSH belongs in internal/adapters/sshx"
+            - pkg: "github.com/pkg/sftp"
+              desc: "core must stay pure — SFTP belongs in internal/adapters/syncfs"
             - pkg: "tailscale.com"
               desc: "core must stay pure — Tailscale belongs in internal/adapters/tailscale"
             - pkg: "github.com/pinnnthreetriples/link-monitor/internal/adapters"
@@ -93,6 +137,14 @@ linters:
           - funlen
           - wrapcheck
           - gosec
+      # A test that stands up its own listener on the loopback, or dials one,
+      # has no caller context to honour: the deadline it should respect is the
+      # one `go test` already enforces, and t.Context() would only add a
+      # second. Production code is not exempt — internal/adapters/sshx and
+      # internal/app/httpapi both go through net.ListenConfig.
+      - path: _test\.go
+        linters:
+          - noctx
 
 formatters:
   enable:

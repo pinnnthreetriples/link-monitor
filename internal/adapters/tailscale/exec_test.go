@@ -27,8 +27,12 @@ func TestHelperProcess(t *testing.T) {
 	if os.Getenv(helperEnv) != "1" {
 		t.Skip("not the helper process")
 	}
-	fmt.Fprint(os.Stdout, os.Getenv(helperStdout))
-	fmt.Fprint(os.Stderr, os.Getenv(helperStderr))
+	// Discarded deliberately: these are the child's own streams, there is
+	// nothing this process could do about a short write, and the parent
+	// asserts on the bytes it actually read — so a failed write shows up
+	// there as a mismatch instead of being swallowed here.
+	_, _ = fmt.Fprint(os.Stdout, os.Getenv(helperStdout))
+	_, _ = fmt.Fprint(os.Stderr, os.Getenv(helperStderr))
 	code, err := strconv.Atoi(os.Getenv(helperCode))
 	if err != nil {
 		code = 0

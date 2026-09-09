@@ -29,6 +29,17 @@ const wsaEACCES = syscall.Errno(10013)
 // recognised by hand.
 const wsaETIMEDOUT = syscall.Errno(10060)
 
+// wsaECONNREFUSED is WSAECONNREFUSED (10061): the packet arrived and the far end
+// answered with a reset, which means that machine is up, its stack is
+// answering, and nothing is listening on that port. It is the commonest SSH
+// failure there is — sshd stopped on a machine that is otherwise fine — and
+// until this constant existed it matched no classification at all and the
+// diagnosis reported it as a probe that did not finish.
+//
+// Spelled as a number for the same reason as the two above: the name lives in
+// golang.org/x/sys/windows, and the value is fixed by Winsock.
+const wsaECONNREFUSED = syscall.Errno(10061)
+
 // DefaultProbeTimeout bounds a TCPReachable whose context has no deadline. It is
 // short: this call runs inside a polling loop and a slow answer is a bad answer.
 const DefaultProbeTimeout = 3 * time.Second
@@ -43,8 +54,10 @@ const DefaultProbeTimeout = 3 * time.Second
 // The result is one of:
 //   - nil - the connection was established (and immediately closed).
 //   - *core.BlockedError - a local packet filter refused it (WSAEACCES, 10013).
+//   - *core.PortClosedError - the far end reset the connection: it is up and
+//     nothing is listening there (WSAECONNREFUSED, 10061).
 //   - *core.TimeoutError - the packet left and nothing answered in time.
-//   - a wrapped error - anything else, refused connections included.
+//   - a wrapped error - anything else.
 //
 // The errno is matched numerically through errors.As, never by message text:
 // these machines run a Russian Windows and every system message is translated.
@@ -90,25 +103,39 @@ func classifyDialError(err error, addr string, port int) error {
 	if isBlocked(err) {
 		return &core.BlockedError{Addr: addr, Port: port}
 	}
+	// A reset is a stronger answer than silence, so it is asked about before
+	// the timeout: the far end is up and has told us there is nothing there.
+	if isErrno(err, wsaECONNREFUSED) {
+		return &core.PortClosedError{Addr: addr, Port: port}
+	}
 	if isTimeout(err) {
 		return &core.TimeoutError{Addr: addr, Port: port}
 	}
 	return fmt.Errorf("connecting to %s:%d: %w", addr, port, err)
 }
 
-// isBlocked reports whether err carries WSAEACCES. It looks through
-// *os.SyscallError first, which is how net wraps a failed connect syscall, and
-// then falls back to a bare syscall.Errno anywhere in the chain.
+// isBlocked reports whether err carries WSAEACCES: a local packet filter
+// refused the connect before it ever left the machine.
 func isBlocked(err error) bool {
+	return isErrno(err, wsaEACCES)
+}
+
+// isErrno reports whether err carries the given winsock number. It looks
+// through *os.SyscallError first, which is how net wraps a failed connect
+// syscall, and then falls back to a bare syscall.Errno anywhere in the chain.
+//
+// The number is compared numerically and never the message text: these
+// machines run a Russian Windows and every system message is translated.
+func isErrno(err error, want syscall.Errno) bool {
 	var sysErr *os.SyscallError
 	if errors.As(err, &sysErr) {
 		var errno syscall.Errno
-		if errors.As(sysErr.Err, &errno) && errno == wsaEACCES {
+		if errors.As(sysErr.Err, &errno) && errno == want {
 			return true
 		}
 	}
 	var errno syscall.Errno
-	return errors.As(err, &errno) && errno == wsaEACCES
+	return errors.As(err, &errno) && errno == want
 }
 
 // isTimeout reports whether err means the attempt went unanswered. A context

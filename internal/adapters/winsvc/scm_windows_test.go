@@ -246,12 +246,12 @@ func TestTheRealClientTreatsAnAbsentServiceAsFalse(t *testing.T) {
 		t.Errorf("LocalServiceRunning(%q) = true for a service that does not exist", name)
 	}
 
-	installed, err := c.ServiceInstalled(t.Context(), name)
+	installed, err := c.LocalServiceInstalled(t.Context(), name)
 	if err != nil {
-		t.Fatalf("ServiceInstalled(%q) error = %v, want none", name, err)
+		t.Fatalf("LocalServiceInstalled(%q) error = %v, want none", name, err)
 	}
 	if installed {
-		t.Errorf("ServiceInstalled(%q) = true for a service that does not exist", name)
+		t.Errorf("LocalServiceInstalled(%q) = true for a service that does not exist", name)
 	}
 }
 

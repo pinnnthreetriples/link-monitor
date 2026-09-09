@@ -64,15 +64,37 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # The pin has a floor, not just a version: golangci-lint embeds the Go
+      # toolchain it was built with, and a build older than GO_VERSION cannot
+      # read the newer export data. It does not fail loudly — the
+      # type-checking linters degrade to nothing, one `level=error`
+      # typechecking line is printed, "0 issues" is reported and the process
+      # exits 7. v2.6.2 did exactly that against Go 1.27 ("export data version
+      # 4 is greater than maximum supported version 2"), which is why this job
+      # had never once passed. When GO_VERSION moves, this must move with it.
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.6.2
+          version: v2.13.2
 
       - name: go mod tidy leaves no diff
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
+
+      # Every Windows-only file has an `_other.go` twin, so that a stray
+      # syscall or a missing stub is a build failure rather than a surprise.
+      # Nothing else checks them: the stubs only break when someone edits the
+      # Windows side and forgets its counterpart. Linux is the whole of the
+      # check — fyne.io/systray's darwin build needs cgo and an Apple SDK,
+      # which is not worth a macOS runner for a program that ships on Windows.
+      - name: the non-Windows stubs still compile
+        env:
+          GOOS: linux
+          CGO_ENABLED: "0"
+        run: |
+          go build ./...
+          go vet ./...
 
   security:
     name: security (gosec + govulncheck)

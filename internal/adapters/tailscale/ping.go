@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"tailscale.com/tailcfg"
+
+	"github.com/pinnnthreetriples/link-monitor/internal/core"
 )
 
 // PeerReachable round-trips the peer through Tailscale itself with a disco
@@ -17,8 +19,41 @@ import (
 // the tailnet — telling those two failures apart is the point of it.
 //
 // addr may be a Tailscale IP or a peer name; a name costs one status lookup.
-// A peer that does not answer yields an error wrapping [ErrPeerUnreachable].
+// A peer that does not answer yields an error wrapping both
+// [ErrPeerUnreachable] and *core.TimeoutError; see [silentPeer] for why both.
 func (c *Client) PeerReachable(ctx context.Context, addr string) (time.Duration, error) {
+	latency, err := c.pingUntilAnswered(ctx, addr)
+	if err != nil {
+		return 0, silentPeer(addr, err)
+	}
+	return latency, nil
+}
+
+// silentPeer marks a peer that never answered as the domain's own
+// *core.TimeoutError, keeping [ErrPeerUnreachable] in the chain.
+//
+// Both, because both are load-bearing and they are matched by different people.
+// core/diagnose asks errors.As for *core.TimeoutError: that is the branch that
+// says «Вторая машина не отвечает — похоже, она выключена», marks the two SSH
+// rows and offers the "check the peer is on" advice. Nothing in this program
+// produced that type, so the branch was dead code and a machine that was simply
+// switched off was reported as «Дотянуться до второй машины не удалось —
+// проверка не завершилась»: a knowable cause, filed as an unknown. Callers
+// inside this package, and this package's tests, still match
+// ErrPeerUnreachable with errors.Is.
+//
+// The port is zero on purpose: a disco ping has no port, and core.TimeoutError
+// is the shape core/diagnose reads for "nothing answered", not a socket record.
+func silentPeer(addr string, err error) error {
+	if !errors.Is(err, ErrPeerUnreachable) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", &core.TimeoutError{Addr: addr}, err)
+}
+
+// pingUntilAnswered is PeerReachable's retry loop: only a silent peer is worth
+// asking twice.
+func (c *Client) pingUntilAnswered(ctx context.Context, addr string) (time.Duration, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, fmt.Errorf("tailscale ping %s: %w", addr, err)
 	}

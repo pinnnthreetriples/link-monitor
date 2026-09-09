@@ -55,7 +55,12 @@ func Run(ctx context.Context, p core.Probe, local, peer core.Machine) (core.Snap
 		d.giveUp(fmt.Errorf("diagnosis stopped before the first probe: %w", err))
 		return d.snapshot(), d.fixes
 	}
-	if d.tailscale(ctx, p) && d.tunnel(ctx, p) {
+	// The order is cheapest and most certain first, and present() is why the
+	// list grew: the daemon already knows whether the peer is in the tailnet
+	// and connected, so a machine that is switched off is named at once rather
+	// than after a ping deadline that only rediscovers it. Each step reports
+	// whether the next one is still worth doing.
+	if d.tailscale(ctx, p) && d.present(ctx, p) && d.tunnel(ctx, p) {
 		d.transport(ctx, p)
 	}
 	return d.snapshot(), d.fixes
@@ -69,6 +74,13 @@ type diagnosis struct {
 	summary     string
 	detail      string
 	latency     time.Duration
+	// peerState is what the run established about the peer machine itself, and
+	// it is the only thing the machine card is drawn from. presenceListed is
+	// the control plane's word, remembered so that silence can be reported
+	// without discarding it — see peer.go for the join, and for why the
+	// daemon's own timestamps are no help with it.
+	peerState      core.PeerState
+	presenceListed bool
 }
 
 // newDiagnosis starts from the honest position: nothing has been checked yet.
@@ -108,6 +120,26 @@ func (d *diagnosis) pending(note string, ids ...core.CheckID) {
 	}
 }
 
+// unsureAbout records that a row could not be answered, and stops the headline
+// claiming more than the rows behind it now support.
+//
+// It only ever lowers the claim, and it does so by the same rule snapshot()
+// uses: a fault that was found outranks an answer that was not got, exactly as
+// StateFail outranks StateUnknown. So a headline that already admits a fault
+// stays, and only «Связь установлена» is replaced — that one, standing over a
+// row that went Unknown, is the contradiction this engine was reported for, the
+// verdict reading «unknown» while the headline read «Связь установлена».
+//
+// Every branch that leaves a row Unknown goes through here rather than
+// assigning d.detail on its own; consistency_test.go proves across every
+// combination of probe answers that none of them got it wrong.
+func (d *diagnosis) unsureAbout(detail string) {
+	if d.summary == summaryOK {
+		d.summary = summaryUnknown
+	}
+	d.detail = detail
+}
+
 // giveUp abandons the whole run, blaming err for every row.
 func (d *diagnosis) giveUp(err error) {
 	d.pending(unknownNote(err), checkOrder...)
@@ -133,5 +165,6 @@ func (d *diagnosis) snapshot() core.Snapshot {
 		Summary: d.summary,
 		Detail:  d.detail,
 		Latency: d.latency,
+		Peer:    d.peerState,
 	}
 }

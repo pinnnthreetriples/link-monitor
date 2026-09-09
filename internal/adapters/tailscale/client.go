@@ -25,6 +25,8 @@ import (
 	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
+
+	"github.com/pinnnthreetriples/link-monitor/internal/core"
 )
 
 // DefaultExePath is where the Windows installer puts the CLI.
@@ -97,14 +99,16 @@ type Client struct {
 
 	pingAttempts int
 	pingBackoff  time.Duration
+	upTimeout    time.Duration
 }
 
-// The Client must keep fitting the two methods of core.Probe it answers for.
-// The shape is spelled out rather than imported: the other two methods belong
-// to other adapters, so core.Probe itself cannot be asserted here.
+// The Client must keep fitting the three methods of core.Probe it answers for.
+// The shape is spelled out rather than imported: the other methods belong to
+// other adapters, so core.Probe itself cannot be asserted here.
 var _ interface {
 	TailscaleUp(ctx context.Context) (bool, string, error)
 	PeerReachable(ctx context.Context, addr string) (time.Duration, error)
+	PeerPresence(ctx context.Context, peer core.Machine) (core.Presence, error)
 } = (*Client)(nil)
 
 // Option configures a [Client]. Later options win over earlier ones.
@@ -136,15 +140,26 @@ func WithPingPolicy(attempts int, backoff time.Duration) Option {
 	}
 }
 
-// New builds a Client that talks to the local Tailscale daemon and, for serve,
-// to the CLI at [DefaultExePath]. It does not contact anything until a method
-// is called, so it never fails.
+// WithUpTimeout bounds how long [Client.Up] waits for the daemon to reach a
+// running state. A value of zero or less is ignored.
+func WithUpTimeout(d time.Duration) Option {
+	return func(c *Client) {
+		if d > 0 {
+			c.upTimeout = d
+		}
+	}
+}
+
+// New builds a Client that talks to the local Tailscale daemon and, for serve
+// and connecting, to the CLI at [DefaultExePath]. It does not contact anything
+// until a method is called, so it never fails.
 func New(opts ...Option) *Client {
 	c := &Client{
 		daemon:       &local.Client{},
 		runner:       newExecRunner(DefaultExePath),
 		pingAttempts: defaultPingAttempts,
 		pingBackoff:  defaultPingBackoff,
+		upTimeout:    defaultUpTimeout,
 	}
 	for _, opt := range opts {
 		opt(c)
