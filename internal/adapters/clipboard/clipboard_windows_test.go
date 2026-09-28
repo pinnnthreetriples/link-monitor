@@ -5,6 +5,7 @@ package clipboard
 import (
 	"encoding/binary"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"unsafe"
@@ -12,29 +13,37 @@ import (
 	"github.com/pinnnthreetriples/link-monitor/internal/core/clipshare"
 )
 
-// These tests talk to the real clipboard of the session they run in. That is
-// the only way to test this package at all — there is no fake Win32 — so they
-// do two things to stay polite. They restore whatever was on the clipboard
-// when they finish, and they never run in parallel: one clipboard cannot be
-// shared between two tests any more than it can between two applications.
+// These tests talk to the real clipboard of the session they run in. They are
+// opt-in and require a disposable text fixture, so a test run never replaces
+// arbitrary user content or sends test values through a running Link Monitor.
+// Pause sharing before opting in. They never run in parallel.
 //
 // A session with no reachable clipboard skips them and says so. A build agent
 // in session 0 is the case that matters; the decision every one of these
 // checks is separately and fully covered in internal/core/clipshare, which
 // needs no clipboard at all.
 
-// requireClipboard skips the test when this session has no clipboard to open.
+const clipboardTestFixture = "LinkMonitor clipboard test fixture"
+
+// requireClipboard skips unless this session holds the disposable fixture.
 func requireClipboard(t *testing.T) {
 	t.Helper()
+	if os.Getenv("LINKMON_TEST_REAL_CLIPBOARD") != "1" {
+		t.Skip("set LINKMON_TEST_REAL_CLIPBOARD=1 to test the desktop clipboard")
+	}
 
 	if err := openClipboard(); err != nil {
 		t.Skipf("no clipboard in this session: %v", err)
 	}
 	closeClipboard()
+	snap, err := New().Look(1 << 20)
+	if err != nil || !snap.HasText || string(snap.Text) != clipboardTestFixture {
+		t.Skip("put the disposable Link Monitor test fixture on the clipboard first")
+	}
 }
 
-// keepClipboard restores the clipboard's text when the test ends, so running
-// the suite on a real desktop does not cost the user what they had copied.
+// keepClipboard restores text or an image after a test. Unknown formats are
+// left alone: replacing something we cannot restore would lose user data.
 func keepClipboard(t *testing.T) {
 	t.Helper()
 
@@ -43,8 +52,16 @@ func keepClipboard(t *testing.T) {
 	if err != nil {
 		t.Skipf("cannot read the clipboard to put it back afterwards: %v", err)
 	}
+	if !before.Recordable ||
+		(before.Format == "png" && len(before.Text) == 0) ||
+		(before.Format != "png" && (!before.HasText || before.Text == nil && before.Bytes > 0)) {
+		t.Skip("clipboard contains an item this test cannot restore")
+	}
 	t.Cleanup(func() {
-		if !before.HasText || len(before.Text) == 0 {
+		if before.Format == "png" {
+			if err := c.PutImage(before.Text); err != nil {
+				t.Errorf("putting the user's screenshot back: %v", err)
+			}
 			return
 		}
 		if err := c.Put(before.Text); err != nil {
@@ -143,6 +160,25 @@ func TestTextRoundTripsThroughTheClipboard(t *testing.T) {
 	}
 	if got.Bytes != len(want) {
 		t.Errorf("Look().Bytes = %d, want %d", got.Bytes, len(want))
+	}
+}
+
+func TestClipboardTestCleanupDoesNotEraseOversizedText(t *testing.T) {
+	requireClipboard(t)
+	keepClipboard(t)
+
+	const size = (1 << 20) + 1
+	c := New()
+	if err := c.Put([]byte(strings.Repeat("x", size))); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("oversized content", func(t *testing.T) { keepClipboard(t) })
+	got, err := c.Look(2 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.HasText || len(got.Text) != size {
+		t.Fatalf("cleanup left %d bytes, want %d", len(got.Text), size)
 	}
 }
 

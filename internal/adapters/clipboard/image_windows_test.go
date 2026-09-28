@@ -7,7 +7,37 @@ import (
 	"image"
 	"image/color"
 	"testing"
+
+	"github.com/pinnnthreetriples/link-monitor/internal/core/clipshare"
 )
+
+func TestClipboardTestCleanupRestoresScreenshot(t *testing.T) {
+	requireClipboard(t)
+	keepClipboard(t)
+	im := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	im.SetNRGBA(0, 0, color.NRGBA{R: 255, A: 255})
+	png, err := clipshare.EncodePNG(im)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := New()
+	if err := c.PutImage(png); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("clipboard test", func(t *testing.T) {
+		keepClipboard(t)
+		if err := c.Put([]byte("temporary test text")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	got, err := c.Look(1 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Format != "png" || len(got.Text) == 0 {
+		t.Fatalf("cleanup left format %q, want the screenshot", got.Format)
+	}
+}
 
 func TestDIBRoundTripPreservesScreenshotPixels(t *testing.T) {
 	im := image.NewNRGBA(image.Rect(0, 0, 2, 2))

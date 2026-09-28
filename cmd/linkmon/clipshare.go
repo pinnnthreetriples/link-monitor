@@ -17,8 +17,8 @@ import (
 // wiring is one file — flag.Var in an init runs before flag.Parse, which
 // parseOptions calls. Every description is Russian, like the rest of them.
 //
-// Sharing starts off. The window and tray can enable it for the current
-// session, and -no-clipboard disables it completely.
+// Sharing starts with the app. The window and tray can pause it for the current
+// session, while -no-clipboard disables it completely.
 //
 // -no-clipboard is the other direction, and it is the one thing a command line
 // can settle: it leaves the feature unwired, so the switch is unavailable
@@ -54,9 +54,10 @@ func wireClip(o options, ssh *sshx.Lazy) clipWiring {
 	}
 	return clipWiring{
 		cfg: app.ClipConfig{
-			PeerName: o.peer.TailnetName,
-			MaxBytes: *clipMaxBytes,
-			Poll:     clipPollOr(*clipPoll),
+			EnableOnStart: true,
+			PeerName:      o.peer.TailnetName,
+			MaxBytes:      *clipMaxBytes,
+			Poll:          clipPollOr(*clipPoll),
 		},
 		here:  clipboard.New(),
 		saved: savedshots.New(winpaths.Screenshots("")),

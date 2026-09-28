@@ -81,8 +81,8 @@ func (s *server) handleClipStatus(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, toClip(s.deps.Clip.Status()))
 }
 
-// handleClipOn switches sharing on. Rule 1 lives at the other end of this
-// route: nothing shares anything until somebody asks here.
+// handleClipOn resumes sharing after a manual pause. Startup activation uses
+// the same Clip service without an HTTP request.
 func (s *server) handleClipOn(w http.ResponseWriter, _ *http.Request) {
 	if s.deps.Clip == nil {
 		writeJSON(w, http.StatusServiceUnavailable, okMessage{Message: msgClipNoClipboard})
@@ -117,9 +117,9 @@ func (s *server) handleClipOff(w http.ResponseWriter, _ *http.Request) {
 // every route here.
 //
 // Two things specific to this route are worth writing down. It is refused
-// outright while sharing is off, so a machine where the user has not switched
-// the feature on cannot have its clipboard written by anything that finds this
-// port. And the capability it grants, to a local process that is already
+// outright while sharing is paused, so a machine whose user paused it cannot
+// have its clipboard written by anything that finds this port. And the
+// capability it grants, to a local process that is already
 // running as this user, is *setting the clipboard* — which any such process can
 // already do by calling SetClipboardData directly, with less effort and no
 // dependency on this program. It grants no read: nothing here, and nothing in
