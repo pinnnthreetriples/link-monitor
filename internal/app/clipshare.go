@@ -155,7 +155,7 @@ type ClipStatus struct {
 }
 
 // Clip is the shared clipboard: one goroutine watching this machine's
-// clipboard for as long as the program runs, off until the user enables it.
+// clipboard for as long as the program runs. Command wiring enables it on start.
 //
 // Two mutexes, and the difference between them is the point. mu guards the
 // state the window reads. access serialises the clipboard itself, so that the

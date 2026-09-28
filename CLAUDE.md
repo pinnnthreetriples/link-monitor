@@ -156,7 +156,7 @@ Three deliberate absences, each for a reason worth keeping:
   the other and may come back. `tools/gates` fails if any code in that feature
   so much as calls a removal function. See the eight rules the feature was
   built to, quoted in `internal/core/foldersync`.
-- **The shared clipboard is off until the user turns it on**, carries bounded
+- **The shared clipboard starts with the app**, can be paused manually, and carries bounded
   text and PNG screenshots, and honours Windows' own do-not-record markers,
   which is how a password manager says no. `tools/gates` fails if clipboard
   content can reach a log or a file.

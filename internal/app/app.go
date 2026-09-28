@@ -65,7 +65,7 @@ type Config struct {
 	// leaves the feature off, which is what rule 5 asks for.
 	Sync FolderConfig
 	// Clip describes the shared clipboard. Its zero value is the defaults, and
-	// command wiring leaves it off until the user enables it.
+	// command wiring enables it on startup; the user can pause it.
 	Clip ClipConfig
 }
 
