@@ -11,16 +11,12 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: iconasset <output.ico>")
-		os.Exit(2)
-	}
 	data, err := trayicon.Render(core.StateOK)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	if err := os.WriteFile(os.Args[1], data, 0o644); err != nil {
+	if err := os.WriteFile("icon.ico", data, 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

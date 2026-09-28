@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -84,7 +85,7 @@ func TestImagesTravelBothWaysWithoutEcho(t *testing.T) {
 		t.Fatal("reverse image was lost or echoed")
 	}
 	left.TurnOff()
-	if err := left.ReceiveImage(testImage(t)); err != ErrClipOff {
+	if err := left.ReceiveImage(testImage(t)); !errors.Is(err, ErrClipOff) {
 		t.Fatal(err)
 	}
 }

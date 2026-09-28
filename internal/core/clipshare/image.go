@@ -14,6 +14,7 @@ const (
 	MaxImagePixels = 16 << 20
 )
 
+// ErrImage means that an image is invalid, unsupported, or above the size limit.
 var ErrImage = errors.New("clipboard: invalid or unsupported image")
 
 // DecodePNG validates dimensions before decoding any pixels. Errors never include input.

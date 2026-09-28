@@ -3,6 +3,7 @@
 package savedshots
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,12 +16,14 @@ import (
 
 const settle = time.Second
 
+// Source reads saved screenshots from a directory and tracks those already seen.
 type Source struct {
 	dir       string
 	seen      map[string]struct{}
 	baselined bool
 }
 
+// New creates a screenshot source for dir.
 func New(dir string) *Source { return &Source{dir: dir} }
 
 // Baseline ignores every screenshot already present when sharing starts.
@@ -63,6 +66,17 @@ func (s *Source) Next() (clipshare.SavedScreenshot, bool, error) {
 	if err != nil {
 		return clipshare.SavedScreenshot{}, false, fmt.Errorf("scanning screenshots: %w", err)
 	}
+	newest, err := s.newestUnseen(entries)
+	if err != nil {
+		return clipshare.SavedScreenshot{}, false, err
+	}
+	if newest.ID == "" || time.Since(newest.Modified) < settle {
+		return clipshare.SavedScreenshot{}, false, nil
+	}
+	return newest, true, nil
+}
+
+func (s *Source) newestUnseen(entries []os.DirEntry) (clipshare.SavedScreenshot, error) {
 	var newest clipshare.SavedScreenshot
 	for _, e := range entries {
 		if !imageFile(e) {
@@ -73,7 +87,7 @@ func (s *Source) Next() (clipshare.SavedScreenshot, bool, error) {
 		}
 		info, err := e.Info()
 		if err != nil {
-			return clipshare.SavedScreenshot{}, false, fmt.Errorf("examining screenshot: %w", err)
+			return clipshare.SavedScreenshot{}, fmt.Errorf("examining screenshot: %w", err)
 		}
 		newest.Names = append(newest.Names, e.Name())
 		if newest.ID == "" || info.ModTime().After(newest.Modified) ||
@@ -81,10 +95,7 @@ func (s *Source) Next() (clipshare.SavedScreenshot, bool, error) {
 			newest.ID, newest.Modified, newest.Size = e.Name(), info.ModTime(), info.Size()
 		}
 	}
-	if newest.ID == "" || time.Since(newest.Modified) < settle {
-		return clipshare.SavedScreenshot{}, false, nil
-	}
-	return newest, true, nil
+	return newest, nil
 }
 
 // Read takes at most one bounded PNG into memory and never writes a file.
@@ -96,14 +107,18 @@ func (s *Source) Read(shot clipshare.SavedScreenshot) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening screenshot: %w", err)
 	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, clipshare.MaxImageBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("reading screenshot: %w", err)
+	data, readErr := io.ReadAll(io.LimitReader(f, clipshare.MaxImageBytes+1))
+	closeErr := f.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("reading screenshot: %w", errors.Join(readErr, closeErr))
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("closing screenshot: %w", closeErr)
 	}
 	return data, nil
 }
 
+// Mark records the names in shot so they are not returned again.
 func (s *Source) Mark(shot clipshare.SavedScreenshot) {
 	if s.seen == nil {
 		s.seen = make(map[string]struct{})

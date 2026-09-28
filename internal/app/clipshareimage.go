@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pinnnthreetriples/link-monitor/internal/core/clipshare"
 )
@@ -31,7 +32,7 @@ func (c *Clip) ReceiveImage(text []byte) error {
 	}
 	normal, err := clipshare.NormalizePNG(text)
 	if err != nil {
-		return err
+		return fmt.Errorf("normalizing received clipboard image: %w", err)
 	}
 	defer clipshare.Zero(normal)
 	here, ok := c.deps.Here.(ImageClipboard)
@@ -54,7 +55,13 @@ func (c *Clip) deliverItem(ctx context.Context, got item) error {
 		if !ok {
 			return ErrClipUnavailable
 		}
-		return peer.DeliverImage(ctx, got.snap.Text)
+		if err := peer.DeliverImage(ctx, got.snap.Text); err != nil {
+			return fmt.Errorf("delivering clipboard image to peer: %w", err)
+		}
+		return nil
 	}
-	return c.deps.There.Deliver(ctx, got.snap.Text)
+	if err := c.deps.There.Deliver(ctx, got.snap.Text); err != nil {
+		return fmt.Errorf("delivering clipboard text to peer: %w", err)
+	}
+	return nil
 }

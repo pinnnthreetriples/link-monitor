@@ -75,7 +75,8 @@ func TestUploadNeverSendsIncompleteOrCancelledInput(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := u.SendUpload(ctx, "file.png", strings.NewReader("x"), "peer"); !errors.Is(err, context.Canceled) {
+	_, err := u.SendUpload(ctx, "file.png", strings.NewReader("x"), "peer")
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled upload: %v", err)
 	}
 	entries, err := os.ReadDir(u.tempRoot)

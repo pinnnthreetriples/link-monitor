@@ -37,7 +37,8 @@ func TestTransfersUploadRecordsBytesAndOutcome(t *testing.T) {
 		if failure != nil {
 			want = failureState(failure)
 		}
-		if got.Name != "image.png" || got.Size != 6 || got.State != want || u.peer != "other" || u.body != "pixels" {
+		if got.Name != "image.png" || got.Size != 6 || got.State != want ||
+			u.peer != "other" || u.body != "pixels" {
 			t.Fatalf("transfer = %+v; upload = %+v", got, u)
 		}
 	}
@@ -45,7 +46,8 @@ func TestTransfersUploadRecordsBytesAndOutcome(t *testing.T) {
 
 func TestTransfersUploadWithoutAdapterIsUnavailable(t *testing.T) {
 	tr := newTestTransfers(&fakeMover{}, 0)
-	if err := tr.Upload(t.Context(), "image.png", strings.NewReader("pixels"), "other"); !errors.Is(err, ErrNoTaildrop) {
+	err := tr.Upload(t.Context(), "image.png", strings.NewReader("pixels"), "other")
+	if !errors.Is(err, ErrNoTaildrop) {
 		t.Fatalf("Upload = %v", err)
 	}
 }

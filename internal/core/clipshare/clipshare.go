@@ -160,18 +160,8 @@ func Decide(s Snapshot, mem Memory, maxBytes int) (Why, Print) {
 	if s.Format == "png" {
 		maxBytes = MaxImageBytes
 	}
-	switch {
-	case s.Format != "" && s.Format != "png", !s.HasText && s.Format != "png":
-		return WhyNotText, Print{}
-	case !s.Recordable:
-		return WhyMarked, Print{}
-	case s.Bytes > maxBytes:
-		return WhyTooBig, Print{}
-	case len(s.Text) == 0:
-		// Either the clipboard held an empty string, or the reader measured an
-		// item and handed over no content. There is nothing to send either way,
-		// and the second case must not be mistaken for one worth reporting.
-		return WhyEmpty, Print{}
+	if why := snapshotWhy(s, maxBytes); why != WhySend {
+		return why, Print{}
 	}
 
 	p := Fingerprint(s.Text)
@@ -189,5 +179,23 @@ func Decide(s Snapshot, mem Memory, maxBytes int) (Why, Print) {
 		return WhySame, p
 	default:
 		return WhySend, p
+	}
+}
+
+func snapshotWhy(s Snapshot, maxBytes int) Why {
+	switch {
+	case s.Format != "" && s.Format != "png", !s.HasText && s.Format != "png":
+		return WhyNotText
+	case !s.Recordable:
+		return WhyMarked
+	case s.Bytes > maxBytes:
+		return WhyTooBig
+	case len(s.Text) == 0:
+		// Either the clipboard held an empty string, or the reader measured an
+		// item and handed over no content. There is nothing to send either way,
+		// and the second case must not be mistaken for one worth reporting.
+		return WhyEmpty
+	default:
+		return WhySend
 	}
 }

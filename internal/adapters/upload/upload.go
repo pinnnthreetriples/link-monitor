@@ -31,7 +31,9 @@ func New(sender Sender) *Adapter { return &Adapter{sender: sender} }
 // SendUpload copies a stream to a private directory, sends it, and removes it.
 // A failed or cancelled copy never reaches the sender. Cleanup errors are
 // returned alongside the original error rather than silently leaking data.
-func (a *Adapter) SendUpload(ctx context.Context, name string, src io.Reader, peer string) (n int64, err error) {
+func (a *Adapter) SendUpload(
+	ctx context.Context, name string, src io.Reader, peer string,
+) (n int64, err error) {
 	if err := validName(name); err != nil {
 		return 0, err
 	}
@@ -103,10 +105,17 @@ func validName(name string) error {
 		}
 	}
 	stem := strings.ToUpper(strings.SplitN(name, ".", 2)[0])
-	reserved := stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL"
-	device := len(stem) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT"))
-	if reserved || (device && stem[3] >= '1' && stem[3] <= '9') {
+	if reservedDeviceName(stem) {
 		return errors.New("reserved upload filename")
 	}
 	return nil
+}
+
+func reservedDeviceName(stem string) bool {
+	if stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL" {
+		return true
+	}
+	return len(stem) == 4 &&
+		(strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) &&
+		stem[3] >= '1' && stem[3] <= '9'
 }

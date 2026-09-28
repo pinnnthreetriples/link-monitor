@@ -46,7 +46,7 @@ func readImage() (clipshare.Snapshot, error) {
 	defer clipshare.Zero(im.Pix)
 	canonical, err := clipshare.EncodePNG(im)
 	if err != nil {
-		return clipshare.Snapshot{}, err
+		return clipshare.Snapshot{}, fmt.Errorf("encoding clipboard bitmap as PNG: %w", err)
 	}
 	return imageSnapshot(canonical), nil
 }
@@ -86,7 +86,7 @@ func imageSnapshot(data []byte) clipshare.Snapshot {
 func (c *Clipboard) PutImage(png []byte) error {
 	im, err := clipshare.DecodePNG(png)
 	if err != nil {
-		return err
+		return fmt.Errorf("decoding image for clipboard: %w", err)
 	}
 	defer clipshare.Zero(im.Pix)
 	dib := encodeDIB(im)

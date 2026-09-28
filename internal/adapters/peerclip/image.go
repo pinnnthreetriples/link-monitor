@@ -13,7 +13,7 @@ import (
 func (p *Peer) DeliverImage(ctx context.Context, image []byte) error {
 	decoded, err := clipshare.DecodePNG(image)
 	if err != nil {
-		return err
+		return fmt.Errorf("validating image for %s: %w", p.name, err)
 	}
 	clipshare.Zero(decoded.Pix)
 	rec, err := p.Record(ctx)
