@@ -36,3 +36,7 @@ func (c *Clipboard) Look(int) (clipshare.Snapshot, error) {
 func (c *Clipboard) Put([]byte) error {
 	return fmt.Errorf("writing the clipboard on %s: %w", runtime.GOOS, ErrUnsupported)
 }
+
+func (c *Clipboard) PutImage([]byte) error {
+	return fmt.Errorf("writing an image on %s: %w", runtime.GOOS, ErrUnsupported)
+}

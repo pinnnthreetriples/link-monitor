@@ -353,22 +353,23 @@ func TestOriginGuard(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
+		host   string
 		origin string
 		want   int
 	}{
-		{"", http.StatusOK},
-		{"http://127.0.0.1:8731", http.StatusOK},
-		{"http://localhost:8731", http.StatusOK},
-		{"http://[::1]:8731", http.StatusOK},
-		{"null", http.StatusForbidden},
-		{"https://example.com", http.StatusForbidden},
-		{"http://100.127.188.87", http.StatusForbidden},
-		{"http://127.0.0.1.evil.com", http.StatusForbidden},
-		{"://", http.StatusForbidden},
+		{"127.0.0.1:8731", "", http.StatusOK},
+		{"127.0.0.1:8731", "http://127.0.0.1:8731", http.StatusOK},
+		{"localhost:8731", "http://localhost:8731", http.StatusOK},
+		{"[::1]:8731", "http://[::1]:8731", http.StatusOK},
+		{"127.0.0.1:8731", "null", http.StatusForbidden},
+		{"127.0.0.1:8731", "https://example.com", http.StatusForbidden},
+		{"127.0.0.1:8731", "http://100.127.188.87", http.StatusForbidden},
+		{"127.0.0.1:8731", "http://127.0.0.1.evil.com", http.StatusForbidden},
+		{"127.0.0.1:8731", "://", http.StatusForbidden},
 	}
 	h := New(Deps{Status: newFakeStatus()})
 	for _, tc := range cases {
-		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+		req := httptest.NewRequest(http.MethodGet, "http://"+tc.host+"/api/status", nil)
 		if tc.origin != "" {
 			req.Header.Set("Origin", tc.origin)
 		}

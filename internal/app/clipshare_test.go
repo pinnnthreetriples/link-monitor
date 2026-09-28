@@ -199,8 +199,8 @@ func TestAnItemMarkedDoNotRecordIsNotTransmitted(t *testing.T) {
 	}
 }
 
-// A file or a picture is counted and no more. Rule 2 carries text only, and a
-// line for every screenshot would bury the two refusals that matter.
+// A file or an unsupported picture is counted and no more. Supported PNG
+// screenshots have separate coverage; these other formats cannot travel.
 func TestAFileOrPictureIsCountedAndSaysNothingElse(t *testing.T) {
 	t.Parallel()
 
@@ -293,6 +293,44 @@ func TestADeliveryThatFailedIsCountedAndSaid(t *testing.T) {
 	}
 	if len(st.Events) != 1 || st.Events[0].Kind != ClipFailed {
 		t.Errorf("Events = %+v, want one failed", st.Events)
+	}
+}
+
+func TestFailedDeliveryRetriesTheUnchangedClipboardAfterRecovery(t *testing.T) {
+	clip, here, there := clipUnderTest(0)
+	at := time.Date(2026, 9, 8, 21, 0, 0, 0, time.UTC)
+	clip.deps.Now = func() time.Time { return at }
+	on(t, clip)
+	there.refuse(errBroken)
+	here.copyText("retry this screenshot or text")
+	clip.tick(context.Background())
+	there.refuse(nil)
+	clip.tick(context.Background())
+	if got := there.received(); len(got) != 0 {
+		t.Fatalf("delivery retried without a pause: %q", got)
+	}
+	at = at.Add(2 * time.Second)
+	clip.tick(context.Background())
+	if got := there.received(); len(got) != 1 || got[0] != "retry this screenshot or text" {
+		t.Fatalf("unchanged clipboard was lost after recovery: %q", got)
+	}
+	clip.tick(context.Background())
+	if got := there.received(); len(got) != 1 {
+		t.Fatalf("successful retry repeated the same item: %q", got)
+	}
+}
+
+func TestNewCopySupersedesFailedDelivery(t *testing.T) {
+	clip, here, there := clipUnderTest(0)
+	on(t, clip)
+	there.refuse(errBroken)
+	here.copyText("obsolete")
+	clip.tick(context.Background())
+	there.refuse(nil)
+	here.copyText("newest")
+	clip.tick(context.Background())
+	if got := there.received(); len(got) != 1 || got[0] != "newest" {
+		t.Fatalf("the old failed item displaced the new copy: %q", got)
 	}
 }
 

@@ -66,7 +66,7 @@ type clipResponse struct {
 	Counts  ClipCountsDTO  `json:"counts"`
 	Events  []ClipEventDTO `json:"events"`
 	Message string         `json:"message"`
-	// Note is the standing guarantee: text only, only while it is on, and
+	// Note is the standing guarantee: text and PNG, only while it is on, and
 	// nothing written down anywhere. It is served rather than written into the
 	// page because the sentence and the behaviour it promises belong together.
 	Note string `json:"note"`

@@ -81,9 +81,8 @@
 
   /* ---------------- 2. dropping a file anywhere else ---------------- */
 
-  // The drop zone on the Файлы tab handles its own drops (files.js). Every
-  // other square inch of the window must refuse a file rather than let the
-  // webview navigate to it, which would replace the UI with the file itself.
+  // files.js sends file drops anywhere in the window. This guard only stops
+  // WebView2 from navigating to a dropped file or unsupported text payload.
   function inDropZone(node) {
     var zone = $('drop');
     return !!(zone && node && zone.contains(node));
@@ -94,8 +93,10 @@
       window.addEventListener(type, function (ev) {
         if (inDropZone(ev.target)) { return; }
         ev.preventDefault();
-        // Say so with the cursor: this is not a place to let go.
-        if (ev.dataTransfer) { ev.dataTransfer.dropEffect = 'none'; }
+        if (ev.dataTransfer) {
+          var types = Array.prototype.slice.call(ev.dataTransfer.types || []);
+          ev.dataTransfer.dropEffect = types.indexOf('Files') >= 0 ? 'copy' : 'none';
+        }
       });
     });
 

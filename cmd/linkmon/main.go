@@ -22,7 +22,9 @@ import (
 
 	"github.com/pinnnthreetriples/link-monitor/internal/adapters/sshx"
 	"github.com/pinnnthreetriples/link-monitor/internal/adapters/tailscale"
+	"github.com/pinnnthreetriples/link-monitor/internal/adapters/upload"
 	"github.com/pinnnthreetriples/link-monitor/internal/adapters/winlock"
+	"github.com/pinnnthreetriples/link-monitor/internal/adapters/winpaths"
 	"github.com/pinnnthreetriples/link-monitor/internal/adapters/winsvc"
 	"github.com/pinnnthreetriples/link-monitor/internal/app"
 	"github.com/pinnnthreetriples/link-monitor/internal/app/httpapi"
@@ -208,7 +210,8 @@ func parseOptions() options {
 	flag.StringVar(&o.keyPath, "key", filepath.Join(home, ".ssh", "id_ed25519"), "закрытый ключ SSH")
 	flag.StringVar(&o.addr, "listen", "127.0.0.1:0", "адрес интерфейса; порт 0 — выбрать свободный")
 	flag.DurationVar(&o.interval, "interval", app.DefaultInterval, "как часто проверять связь")
-	flag.StringVar(&o.inbox, "inbox", filepath.Join(home, "Downloads"), "куда складывать принятые файлы")
+	flag.StringVar(&o.inbox, "inbox", winpaths.Downloads(filepath.Join(home, "Downloads")),
+		"куда складывать принятые файлы")
 	flag.BoolVar(&o.browser, "browser", false, "открывать интерфейс в браузере, а не в своём окне")
 	flag.StringVar(&o.send, "send", "", "отправить этот файл на второй компьютер и выйти")
 	flag.StringVar(&o.menu, "menu", "",
@@ -224,17 +227,20 @@ func run(o options) error {
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stopSignals()
 	ctx, cancel := context.WithCancel(signalCtx)
-	defer cancel()
 
 	application, closeApp := startApp(ctx, o)
-	defer closeApp()
+	defer func() {
+		cancel()
+		closeApp()
+	}()
 
 	listener, err := httpapi.Listen(o.addr)
 	if err != nil {
 		return fmt.Errorf("opening the interface's port: %w", err)
 	}
 	uiURL := "http://" + listener.Addr().String() + "/"
-	server, serveErr := serve(listener, mount(application, o.peer.TailnetName))
+	quick := wireQuick(o)
+	server, serveErr := serve(listener, mount(application, o.peer.TailnetName, quick))
 
 	// The port was chosen by the operating system a moment ago, so nothing
 	// outside this process knows it yet. Publishing has to happen after the
@@ -252,7 +258,7 @@ func run(o options) error {
 		Notifier:  notifier,
 		Window:    win,
 		ShellMenu: explorerMenu(slog.Default()),
-		Quick:     wireQuick(o),
+		Quick:     quick,
 		Clip:      application.Clip,
 		UIURL:     uiURL,
 	})
@@ -308,7 +314,9 @@ func startApp(ctx context.Context, o options) (*app.App, func()) {
 		SyncState: folder.state,
 		ClipHere:  clip.here,
 		ClipPeer:  clip.peer,
+		ClipSaved: clip.saved,
 	})
+	application.Transfers.SetUploader(upload.New(tailnet))
 	application.Start()
 
 	return application, func() {

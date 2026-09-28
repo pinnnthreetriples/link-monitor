@@ -5,6 +5,7 @@ package clipboard
 import (
 	"fmt"
 	"math"
+	"runtime"
 	"sync"
 	"time"
 	"unsafe"
@@ -91,12 +92,15 @@ const (
 )
 
 // openClipboard takes the clipboard, retrying while somebody else holds it.
+// Windows ties an open clipboard to the calling OS thread. Keep the goroutine
+// on that thread until closeClipboard, including during the retry loop.
 //
 // The window handle is deliberately zero. This program's own window belongs to
 // internal/ui and is not always there — the clipboard has to work with the
 // window hidden, and it has to work in a build with no window at all — and the
 // clipboard needs no owner window to be read or written.
 func openClipboard() error {
+	runtime.LockOSThread()
 	var last error
 	for attempt := range openAttempts {
 		if attempt > 0 {
@@ -108,13 +112,17 @@ func openClipboard() error {
 		}
 		last = err
 	}
+	runtime.UnlockOSThread()
 	return fmt.Errorf("opening the clipboard after %d attempts: %w: %w", openAttempts, last, ErrBusy)
 }
 
 // closeClipboard releases the clipboard. A failure here is not reported to
 // anybody: it can only mean this thread did not hold it, the caller's answer
 // has already been collected, and there is nothing left to undo.
-func closeClipboard() { _, _ = call(procCloseClipboard) }
+func closeClipboard() {
+	_, _ = call(procCloseClipboard)
+	runtime.UnlockOSThread()
+}
 
 // formatIDs are the three registered formats' ids for this session.
 type formatIDs struct {
@@ -247,4 +255,13 @@ func copyInto(dst uintptr, src []uint16) {
 	//nolint:gosec // G103: pinned for the call by //go:uintptrescapes on callPtr
 	_, _ = callPtr(procRtlMoveMemory, dst, uintptr(unsafe.Pointer(&src[0])),
 		uintptr(len(src))*2)
+}
+
+// copyIntoBytes hands a bounded image block to Windows-owned global memory.
+func copyIntoBytes(dst uintptr, src []byte) {
+	if len(src) == 0 {
+		return
+	}
+	//nolint:gosec // G103: callPtr keeps the source alive across the syscall.
+	_, _ = callPtr(procRtlMoveMemory, dst, uintptr(unsafe.Pointer(&src[0])), uintptr(len(src)))
 }

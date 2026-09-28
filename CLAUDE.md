@@ -156,10 +156,10 @@ Three deliberate absences, each for a reason worth keeping:
   the other and may come back. `tools/gates` fails if any code in that feature
   so much as calls a removal function. See the eight rules the feature was
   built to, quoted in `internal/core/foldersync`.
-- **The shared clipboard is off until the user turns it on**, carries text
-  only, and honours Windows' own do-not-record markers, which is how a password
-  manager says no. `tools/gates` fails if clipboard content can reach a log or
-  a file.
+- **The shared clipboard is off until the user turns it on**, carries bounded
+  text and PNG screenshots, and honours Windows' own do-not-record markers,
+  which is how a password manager says no. `tools/gates` fails if clipboard
+  content can reach a log or a file.
 - **There is no «Открыть папку ПК»**, because the peer publishes no share for
   it and Explorer would hang for 13 seconds before failing — measured, not
   assumed. The shared folder already mirrors that folder, so the honest button

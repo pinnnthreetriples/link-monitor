@@ -7,9 +7,9 @@
 // could read the user's files and keys anyway — a token kept next to the socket
 // it protects would be theatre. What is defended against is the one attacker
 // loopback does not exclude: a web page in the user's browser, which can send
-// cross-origin requests to 127.0.0.1. Hence [allowedOrigin]: a request that
-// carries an Origin header at all must carry a loopback one. Requests with no
-// Origin — the UI window, curl, the tests — are allowed through.
+// cross-origin requests to 127.0.0.1. Hence [allowedOrigin]: the Host must
+// name loopback, and a browser Origin must match that Host and the HTTP scheme.
+// Requests with no Origin from local clients and SSH port forwards are allowed.
 //
 // Every message this package returns is Russian; Go error strings are wrapped
 // and dropped here rather than shown.
@@ -21,7 +21,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/pinnnthreetriples/link-monitor/internal/app"
@@ -104,15 +104,17 @@ type LinkController interface {
 // Deps are the services the handlers stand on. A nil field is allowed: the
 // routes that needed it answer 503 with a Russian message instead of panicking.
 type Deps struct {
-	Status   StatusSource
-	Fixes    FixRunner
-	History  HistorySource
-	Peers    PeerSource
-	Files    FileService
-	Forwards ForwardService
-	Link     LinkController
-	Sync     SyncService
-	Clip     ClipService
+	Status       StatusSource
+	Fixes        FixRunner
+	History      HistorySource
+	Peers        PeerSource
+	Files        FileService
+	Uploads      UploadService
+	Forwards     ForwardService
+	Link         LinkController
+	Sync         SyncService
+	Clip         ClipService
+	FolderOpener FolderOpener
 	// DefaultPeer is the tailnet name of the machine this install watches: the
 	// one a file goes to when the request names none, and the one GET /api/peers
 	// reports as configuredPeer so the UI never has to guess it from the list.
@@ -136,6 +138,7 @@ func New(deps Deps) http.Handler {
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("GET /api/peers", s.handlePeers)
 	mux.HandleFunc("POST /api/files/send", s.handleFilesSend)
+	mux.HandleFunc("POST /api/files/upload", s.handleFileUpload)
 	mux.HandleFunc("POST /api/files/receive", s.handleFilesReceive)
 	mux.HandleFunc("GET /api/files", s.handleFilesList)
 	mux.HandleFunc("POST /api/forward", s.handleForwardStart)
@@ -145,6 +148,7 @@ func New(deps Deps) http.Handler {
 	mux.HandleFunc("POST /api/link", s.handleLink)
 	mux.HandleFunc("GET /api/sync", s.handleSyncStatus)
 	mux.HandleFunc("POST /api/sync/run", s.handleSyncRun)
+	mux.HandleFunc("POST /api/sync/open", s.handleFolderOpen)
 	mux.HandleFunc("GET /api/clip", s.handleClipStatus)
 	mux.HandleFunc("POST /api/clip/on", s.handleClipOn)
 	mux.HandleFunc("POST /api/clip/off", s.handleClipOff)
@@ -152,6 +156,7 @@ func New(deps Deps) http.Handler {
 	// forwarded over the SSH session this program already holds. What protects
 	// it is argued where it is handled, in clip.go.
 	mux.HandleFunc("POST /api/clip/receive", s.handleClipReceive)
+	mux.HandleFunc("POST /api/clip/image", s.handleClipImage)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 
 	// A path that exists but was asked for with the wrong method answers in the
@@ -168,17 +173,18 @@ func New(deps Deps) http.Handler {
 // apiPaths is every path this API answers on, for the wrong-method fallback.
 var apiPaths = []string{
 	"/api/status", "/api/check", "/api/fix", "/api/history", "/api/peers",
-	"/api/files", "/api/files/send", "/api/files/receive",
+	"/api/files", "/api/files/send", "/api/files/upload", "/api/files/receive",
 	"/api/forward", "/api/serve", "/api/link", "/api/events",
-	"/api/sync", "/api/sync/run",
+	"/api/sync", "/api/sync/run", "/api/sync/open",
 	"/api/clip", "/api/clip/on", "/api/clip/off", "/api/clip/receive",
+	"/api/clip/image",
 }
 
-// guardOrigin refuses a request whose Origin is set and is not loopback, which
-// is what stops a web page in the user's browser from driving this API.
+// guardOrigin checks the Host even when Origin is absent, since DNS rebinding
+// can make a browser send a same-origin request with no Origin header.
 func guardOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !allowedOrigin(r.Header.Get("Origin")) {
+		if !allowedOrigin(r.Header.Get("Origin"), r.Host) {
 			writeError(w, http.StatusForbidden, msgBadOrigin)
 			return
 		}
@@ -186,17 +192,18 @@ func guardOrigin(next http.Handler) http.Handler {
 	})
 }
 
-// allowedOrigin reports whether an Origin header may drive this API. An empty
-// header is allowed: same-origin fetches and non-browser clients send none.
-func allowedOrigin(origin string) bool {
-	if origin == "" {
-		return true
-	}
-	u, err := url.Parse(origin)
-	if err != nil || u.Host == "" {
+// allowedOrigin accepts local requests, including clients without Origin, and
+// requires browser requests to name exactly the requested HTTP origin.
+func allowedOrigin(origin, requestHost string) bool {
+	host, port, err := net.SplitHostPort(requestHost)
+	if err != nil || !isLoopbackHost(host) {
 		return false
 	}
-	return isLoopbackHost(u.Hostname())
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return false
+	}
+	return origin == "" || strings.EqualFold(origin, "http://"+requestHost)
 }
 
 // isLoopbackHost reports whether a host names this machine and nothing else.

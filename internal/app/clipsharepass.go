@@ -22,6 +22,7 @@ func (c *Clip) loop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			c.enableAtStartup()
 			c.tick(ctx)
 		}
 	}
@@ -39,6 +40,7 @@ func (c *Clip) shutdown() {
 
 // item is one clipboard change, already decided about.
 type item struct {
+	seq  uint32
 	snap clipshare.Snapshot
 	mark clipshare.Print
 	why  clipshare.Why
@@ -50,6 +52,11 @@ type item struct {
 // item being written cannot land in the middle of them; the delivery, which
 // takes SSH round trips, happens outside it.
 func (c *Clip) tick(ctx context.Context) {
+	c.tickClipboard(ctx)
+	c.tickSavedScreenshot(ctx)
+}
+
+func (c *Clip) tickClipboard(ctx context.Context) {
 	if !c.On() {
 		return
 	}
@@ -64,16 +71,26 @@ func (c *Clip) tick(ctx context.Context) {
 	defer clipshare.Zero(got.snap.Text)
 
 	if !got.why.Sends() {
+		c.clearRetry()
 		c.note(got.why, got.snap.Bytes)
 		return
 	}
 	c.deliver(ctx, got)
 }
 
+func (c *Clip) clearRetry() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.retryPending, c.retryDelay = false, 0
+}
+
 // take reads the clipboard if it has changed and decides about what it found.
 // It reports false when there is nothing to do — which is the common case, and
 // the case in which the clipboard is not read at all.
 func (c *Clip) take() (item, bool) {
+	if !c.On() {
+		return item{}, false
+	}
 	seq, err := c.deps.Here.Sequence()
 	if err != nil {
 		c.fail(msgClipNoClipboard)
@@ -85,10 +102,14 @@ func (c *Clip) take() (item, bool) {
 	snap, err := c.deps.Here.Look(c.cfg.MaxBytes)
 	if err != nil {
 		c.fail(msgClipReadFailed)
+		// Retry this sequence next poll; a temporarily busy clipboard is not consumed.
+		c.mu.Lock()
+		c.baseline = seq - 1
+		c.mu.Unlock()
 		return item{}, false
 	}
 	why, mark := clipshare.Decide(snap, c.memory(), c.cfg.MaxBytes)
-	return item{snap: snap, mark: mark, why: why}, true
+	return item{seq: seq, snap: snap, mark: mark, why: why}, true
 }
 
 // moved reports whether the clipboard has changed since the last look, and
@@ -104,6 +125,15 @@ func (c *Clip) moved(seq uint32) bool {
 
 	was, had := c.baseline, c.haveBaseline
 	c.baseline, c.haveBaseline = seq, true
+	if had && was == seq && c.retryPending && c.retrySeq == seq {
+		return !c.deps.Now().Before(c.retryAt)
+	}
+	if !had || was != seq {
+		c.retryPending, c.retryDelay = false, 0
+	}
+	if had && was != seq {
+		c.lastLocalChange = c.deps.Now()
+	}
 	return had && was != seq
 }
 
@@ -120,7 +150,10 @@ func (c *Clip) deliver(ctx context.Context, got item) {
 	sendCtx, cancel := context.WithTimeout(ctx, c.cfg.Timeout)
 	defer cancel()
 
-	err := c.deps.There.Deliver(sendCtx, got.snap.Text)
+	if !c.On() {
+		return
+	}
+	err := c.deliverItem(sendCtx, got)
 	switch {
 	case err == nil:
 		c.sent(got.mark, got.snap.Bytes)
@@ -131,9 +164,24 @@ func (c *Clip) deliver(ctx context.Context, got item) {
 		// A normal state, not a fault: the feature needs the program running
 		// on both machines, and the window says exactly that.
 		c.peerGone()
+		c.scheduleRetry(got.seq)
 	default:
 		c.failed(msgClipSendFailed, got.snap.Bytes)
+		c.scheduleRetry(got.seq)
 	}
+}
+
+// scheduleRetry rechecks an undelivered item while it still occupies the clipboard.
+// A fresh copy supersedes it; no clipboard content is retained between attempts.
+func (c *Clip) scheduleRetry(seq uint32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.retryDelay == 0 {
+		c.retryDelay = clipRetryInitial
+	} else {
+		c.retryDelay = min(c.retryDelay*2, clipRetryMaximum)
+	}
+	c.retrySeq, c.retryAt, c.retryPending = seq, c.deps.Now().Add(c.retryDelay), true
 }
 
 // Receive puts an item that arrived from the peer on this machine's clipboard.
@@ -149,6 +197,8 @@ func (c *Clip) deliver(ctx context.Context, got item) {
 // It refuses while sharing is off, which is rule 1 seen from this side: a
 // feature that is switched off does not put things on the user's clipboard.
 func (c *Clip) Receive(text []byte) error {
+	c.access.Lock()
+	defer c.access.Unlock()
 	if !c.Available() {
 		return ErrClipUnavailable
 	}
@@ -160,14 +210,11 @@ func (c *Clip) Receive(text []byte) error {
 		return fmt.Errorf("%w: %d bytes", ErrClipTooBig, len(text))
 	}
 
-	c.access.Lock()
-	defer c.access.Unlock()
-
-	c.plant(clipshare.Fingerprint(text))
 	if err := c.deps.Here.Put(text); err != nil {
 		c.fail(msgClipPutFailed)
 		return fmt.Errorf("putting the arriving item on this machine's clipboard: %w", err)
 	}
+	c.plant(clipshare.Fingerprint(text))
 	c.rebase()
 	c.received(len(text))
 	return nil
@@ -197,17 +244,27 @@ func (c *Clip) rebase() {
 
 	if err != nil {
 		c.haveBaseline = false
+		c.retryPending, c.retryDelay = false, 0
 		return
 	}
 	c.baseline, c.haveBaseline = seq, true
+	c.retryPending, c.retryDelay = false, 0
+	c.lastLocalChange = c.deps.Now()
 }
 
 // sent records an item that reached the peer.
 func (c *Clip) sent(mark clipshare.Print, size int) {
+	c.recordSent(mark, size, true)
+}
+
+func (c *Clip) recordSent(mark clipshare.Print, size int, clearClipboardRetry bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.mem = c.mem.AfterSending(mark)
+	if clearClipboardRetry {
+		c.retryPending, c.retryDelay = false, 0
+	}
 	c.counts.Sent++
 	c.failure, c.peerMissing = "", false
 	c.record(ClipSent, size)

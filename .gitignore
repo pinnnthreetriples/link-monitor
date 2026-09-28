@@ -3,7 +3,9 @@
 /build/
 /dist/
 *.exe
+*.exe~
 *.syso
+/cmd/linkmon/icon.ico
 
 # Coverage
 coverage.out

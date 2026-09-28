@@ -19,9 +19,11 @@ const (
 	DefaultClipPoll = 400 * time.Millisecond
 
 	// DefaultClipTimeout bounds one delivery to the peer — two SSH round trips
-	// and one POST through a forwarded port. Past it the item is abandoned
-	// rather than left to queue up behind the next copy.
+	// and one POST through a forwarded port. A timed-out item is retried while
+	// it still occupies the clipboard; a newer copy takes precedence.
 	DefaultClipTimeout = 30 * time.Second
+	clipRetryInitial   = 2 * time.Second
+	clipRetryMaximum   = 30 * time.Second
 
 	// clipEventsKept is how many recent items the window is told about. The
 	// list carries what happened and how big it was, never what it was, and a
@@ -31,8 +33,7 @@ const (
 
 var (
 	// ErrClipOff means the shared clipboard is switched off, so nothing may be
-	// written to this machine's clipboard. Rule 1: off is the default, and off
-	// means nothing happens — including nothing arriving.
+	// written to this machine's clipboard. Off means nothing arrives.
 	ErrClipOff = errors.New("app: the shared clipboard is switched off")
 
 	// ErrClipTooBig means an arriving item is past this machine's own cap. The
@@ -74,6 +75,8 @@ type PeerInbox interface {
 
 // ClipConfig describes the shared clipboard.
 type ClipConfig struct {
+	// EnableOnStart enables sharing once at process startup; pause remains session-local.
+	EnableOnStart bool
 	// PeerName is what the UI calls the other machine.
 	PeerName string
 	// MaxBytes is rule 2's cap on one item; zero means
@@ -90,6 +93,7 @@ type ClipConfig struct {
 type ClipDeps struct {
 	Here  Clipboard
 	There PeerInbox
+	Saved SavedScreenshots
 	// Now is the clock. Nil means time.Now.
 	Now func() time.Time
 }
@@ -136,8 +140,7 @@ type ClipStatus struct {
 	// Available says this machine has a clipboard this program can share and
 	// a peer to share it with. False is the whole feature missing, not off.
 	Available bool
-	// On says the user has switched it on. Rule 1: this starts false every
-	// time the program starts, and nothing but a user action sets it.
+	// On says sharing is active; the user enables it from the window or tray.
 	On       bool
 	PeerName string
 	MaxBytes int
@@ -152,8 +155,7 @@ type ClipStatus struct {
 }
 
 // Clip is the shared clipboard: one goroutine watching this machine's
-// clipboard for as long as the program runs, and switched off until the user
-// says otherwise.
+// clipboard for as long as the program runs, off until the user enables it.
 //
 // Two mutexes, and the difference between them is the point. mu guards the
 // state the window reads. access serialises the clipboard itself, so that the
@@ -167,21 +169,30 @@ type Clip struct {
 
 	access sync.Mutex
 
-	mu           sync.Mutex
-	on           bool
-	started      bool
-	stopped      bool
-	baseline     uint32
-	haveBaseline bool
-	mem          clipshare.Memory
-	counts       ClipCounts
-	events       []ClipEvent
-	failure      string
-	peerMissing  bool
+	mu                    sync.Mutex
+	on                    bool
+	autoPending           bool
+	started               bool
+	stopped               bool
+	baseline              uint32
+	haveBaseline          bool
+	retrySeq              uint32
+	retryAt               time.Time
+	retryDelay            time.Duration
+	retryPending          bool
+	screenshotsRetryAt    time.Time
+	screenshotsRetryDelay time.Duration
+	screenshotsRetryName  string
+	lastLocalChange       time.Time
+	mem                   clipshare.Memory
+	counts                ClipCounts
+	events                []ClipEvent
+	failure               string
+	peerMissing           bool
 }
 
 // NewClip prepares the shared clipboard. It reads nothing and sends nothing
-// until the user switches it on, which is rule 1 and is not configurable.
+// until Start; startup activation is configured by EnableOnStart.
 func NewClip(cfg ClipConfig, d ClipDeps) *Clip {
 	if cfg.MaxBytes <= 0 {
 		cfg.MaxBytes = clipshare.DefaultMaxBytes
@@ -222,6 +233,8 @@ func (c *Clip) On() bool {
 // clipboard when they reached for the switch was copied before they turned
 // anything on, and sending it would be this program deciding they meant to.
 func (c *Clip) TurnOn() error {
+	c.access.Lock()
+	defer c.access.Unlock()
 	if !c.Available() {
 		return ErrClipUnavailable
 	}
@@ -234,8 +247,11 @@ func (c *Clip) TurnOn() error {
 	defer c.mu.Unlock()
 
 	c.on = true
+	c.autoPending = false
 	c.baseline, c.haveBaseline = seq, true
+	c.retryPending, c.retryDelay = false, 0
 	c.failure = ""
+	c.baselineScreenshots()
 	return nil
 }
 
@@ -246,11 +262,16 @@ func (c *Clip) TurnOn() error {
 // feature off and on again is a pause, not a reset, and forgetting would mean
 // the first copy after the pause could bounce.
 func (c *Clip) TurnOff() {
+	c.access.Lock()
+	defer c.access.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.on = false
+	c.autoPending = false
 	c.haveBaseline = false
+	c.retryPending, c.retryDelay = false, 0
+	c.screenshotsRetryAt, c.screenshotsRetryDelay = time.Time{}, 0
 }
 
 // Status reports everything the window shows. The event list is a copy: the
@@ -272,7 +293,7 @@ func (c *Clip) Status() ClipStatus {
 }
 
 // Start launches the watching goroutine. Calling it twice is a no-op, and it
-// starts even with sharing off — the loop does nothing until it is on, and
+// starts even with sharing off — the loop retries startup activation, and
 // there is then no goroutine to start at the moment the user flips a switch.
 func (c *Clip) Start(ctx context.Context) {
 	if !c.Available() {
@@ -284,10 +305,39 @@ func (c *Clip) Start(ctx context.Context) {
 		return
 	}
 	c.started = true
+	c.autoPending = c.cfg.EnableOnStart
 	c.mu.Unlock()
+	if c.cfg.EnableOnStart {
+		c.enableAtStartup()
+	}
 
 	c.wg.Add(1)
 	go c.loop(ctx)
+}
+
+// enableAtStartup retries a transient clipboard failure until activation works.
+// A manual pause clears autoPending, so the retry never overrides the user.
+func (c *Clip) enableAtStartup() {
+	c.access.Lock()
+	defer c.access.Unlock()
+	c.mu.Lock()
+	pending := c.autoPending
+	c.mu.Unlock()
+	if !pending {
+		return
+	}
+	seq, err := c.deps.Here.Sequence()
+	if err != nil {
+		c.fail(msgClipNoClipboard)
+		return
+	}
+	c.mu.Lock()
+	c.on = true
+	c.autoPending = false
+	c.baseline, c.haveBaseline = seq, true
+	c.failure = ""
+	c.baselineScreenshots()
+	c.mu.Unlock()
 }
 
 // Wait blocks until the watching goroutine has finished, so a test can prove

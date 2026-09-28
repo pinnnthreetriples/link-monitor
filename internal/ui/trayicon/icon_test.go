@@ -46,12 +46,7 @@ func TestDrawSizeAndShape(t *testing.T) {
 				t.Fatalf("image is %dx%d, want %[3]dx%[3]d", b.Dx(), b.Dy(), size)
 			}
 
-			// The middle is the state's colour, opaque.
-			mid := img.NRGBAAt(size/2, size/2)
-			if hex(mid) != "#3fbf7f" || mid.A != 0xff {
-				t.Errorf("centre pixel = %s alpha %d, want #3fbf7f alpha 255", hex(mid), mid.A)
-			}
-			// The corners are outside the disc and must stay transparent, or
+			// The corners are outside the tile and must stay transparent, or
 			// the icon would show as a square block on the taskbar.
 			for _, p := range [][2]int{{0, 0}, {size - 1, 0}, {0, size - 1}, {size - 1, size - 1}} {
 				if a := img.NRGBAAt(p[0], p[1]).A; a != 0 {
@@ -62,19 +57,18 @@ func TestDrawSizeAndShape(t *testing.T) {
 	}
 }
 
-func TestDrawRingIsDarkerThanTheFill(t *testing.T) {
+func TestDrawOutlineIsDarkerThanTheState(t *testing.T) {
 	const size = 32
 	img, err := Draw(core.StateFail, size)
 	if err != nil {
 		t.Fatalf("Draw: %v", err)
 	}
 
-	side := float64(img.Bounds().Dy())
-	fill := img.NRGBAAt(size/2, size/2)
-	// A pixel just inside the outer edge lands on the ring.
-	ring := img.NRGBAAt(size/2, int(side*insetRatio)+1)
+	fill := Color(core.StateFail)
+	// The outer border separates the tile from a light taskbar.
+	ring := img.NRGBAAt(size/2, 2)
 	if ring.A == 0 {
-		t.Fatalf("expected the ring at the top of the disc, found a transparent pixel")
+		t.Fatalf("expected an outline at the top of the tile, found a transparent pixel")
 	}
 	if int(ring.R)+int(ring.G)+int(ring.B) >= int(fill.R)+int(fill.G)+int(fill.B) {
 		t.Errorf("ring %s is not darker than the fill %s", hex(ring), hex(fill))
@@ -82,21 +76,23 @@ func TestDrawRingIsDarkerThanTheFill(t *testing.T) {
 }
 
 func TestDrawAntiAliasesTheEdge(t *testing.T) {
-	// Somewhere along a row through the centre there must be a pixel that is
-	// neither fully transparent nor fully opaque, or the disc has hard stairs.
+	// Rounded corners must have fractional coverage. Straight edges can align
+	// exactly with the pixel grid, so inspect the whole silhouette.
 	const size = 32
 	img, err := Draw(core.StateOK, size)
 	if err != nil {
 		t.Fatalf("Draw: %v", err)
 	}
 	partial := 0
-	for x := range size {
-		if a := img.NRGBAAt(x, size/2).A; a > 0 && a < 0xff {
-			partial++
+	for y := range size {
+		for x := range size {
+			if a := img.NRGBAAt(x, y).A; a > 0 && a < 0xff {
+				partial++
+			}
 		}
 	}
 	if partial == 0 {
-		t.Error("no partially transparent pixels across the disc: the edge is not anti-aliased")
+		t.Error("no partially transparent pixels: the edge is not anti-aliased")
 	}
 }
 
@@ -107,9 +103,9 @@ func TestDrawEachStateLooksDifferent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Draw(%s): %v", s, err)
 		}
-		got := hex(img.NRGBAAt(8, 8))
+		got := string(img.Pix)
 		if other, dup := seen[got]; dup {
-			t.Errorf("%s and %s both draw %s in the centre", s, other, got)
+			t.Errorf("%s and %s draw identical icons", s, other)
 		}
 		seen[got] = s
 	}
@@ -134,7 +130,8 @@ func TestRenderPacksEverySize(t *testing.T) {
 		t.Fatalf("got %d entries, want %d", len(entries), len(Sizes))
 	}
 	for i, e := range entries {
-		if int(e.width) != Sizes[i] || int(e.height) != Sizes[i] {
+		want := Sizes[i] % 256 // ICO stores 256 px as a zero width and height.
+		if int(e.width) != want || int(e.height) != want {
 			t.Errorf("entry %d is %dx%d, want %[4]dx%[4]d", i, e.width, e.height, Sizes[i])
 		}
 	}
@@ -186,22 +183,5 @@ func TestShade(t *testing.T) {
 	want := color.NRGBA{R: 100, G: 50, B: 25, A: 255}
 	if got != want {
 		t.Errorf("shade = %v, want %v", got, want)
-	}
-}
-
-func TestDiscIsAnAlphaMask(t *testing.T) {
-	// draw.DrawMask only treats the mask as coverage if it says it is alpha.
-	d := disc{cx: 8, cy: 8, r: 6, size: 16}
-	if d.ColorModel() != color.AlphaModel {
-		t.Errorf("ColorModel = %v, want color.AlphaModel", d.ColorModel())
-	}
-	if got := d.Bounds().Dx(); got != 16 {
-		t.Errorf("Bounds width = %d, want 16", got)
-	}
-	if a, _, _, _ := d.At(8, 8).RGBA(); a == 0 {
-		t.Error("the centre of the disc is not covered")
-	}
-	if a, _, _, _ := d.At(0, 0).RGBA(); a != 0 {
-		t.Error("the corner of the disc is covered")
 	}
 }

@@ -46,6 +46,7 @@ func TestAssetsHoldTheWholeWindow(t *testing.T) {
 		"clip.js",
 		"menu.js",
 		"desktop.js",
+		"shared-folder.js",
 		"favicon.svg",
 	}
 	assets := linkmonitor.Assets()
