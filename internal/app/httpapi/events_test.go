@@ -22,7 +22,7 @@ func TestEventsStreamsTheCurrentStatusThenEveryChange(t *testing.T) {
 	h := New(Deps{Status: src})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8731/api/events", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 
 	done := make(chan struct{})
@@ -64,7 +64,7 @@ func TestEventsStopsWhenThePollerStops(t *testing.T) {
 	src := newFakeStatus()
 	h := New(Deps{Status: src})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8731/api/events", nil)
 	rec := httptest.NewRecorder()
 
 	done := make(chan struct{})
@@ -129,7 +129,7 @@ func TestEventsWithoutAPollerOrAFlusher(t *testing.T) {
 		t.Errorf("no poller code = %d", rec.Code)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8731/api/events", nil)
 	plain := httptest.NewRecorder()
 	New(Deps{Status: newFakeStatus()}).ServeHTTP(noFlusher{plain}, req)
 	if plain.Code != http.StatusInternalServerError {
@@ -144,7 +144,7 @@ func TestEventsSendsAHeartbeatOnAnIdleStream(t *testing.T) {
 	s := &server{deps: Deps{Status: src}}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8731/api/events", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 
 	// The real heartbeat is minutes apart; the frame itself is what is worth

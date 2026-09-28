@@ -54,6 +54,12 @@ func (c *Clipboard) Look(maxBytes int) (clipshare.Snapshot, error) {
 	}
 	defer closeClipboard()
 
+	if formatAvailable(cfDIB) || imagePNGAvailable() {
+		if !recordable(ids) {
+			return clipshare.Snapshot{Format: "png"}, nil
+		}
+		return readImage()
+	}
 	if !formatAvailable(cfUnicodeText) {
 		return clipshare.Snapshot{}, nil
 	}

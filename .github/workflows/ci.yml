@@ -11,7 +11,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-permissions: read-all
+permissions:
+  contents: read
 
 env:
   GO_VERSION: "1.27.0"
@@ -79,6 +80,19 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: JavaScript syntax
+        run: |
+          $files = @(Get-ChildItem -LiteralPath frontend -Filter *.js -File)
+          if ($files.Count -eq 0) { throw "no JavaScript files found" }
+          foreach ($file in $files) {
+            node --check $file.FullName
+            if ($LASTEXITCODE -ne 0) { throw "JavaScript syntax check failed: $($file.Name)" }
+          }
+
       # go vet earns its own step: it caught a copylocks defect (a mutex copied
       # by value in a test table) that golangci-lint's configured set missed.
       - name: go vet
@@ -129,7 +143,7 @@ jobs:
 
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           govulncheck ./...
 
   build:
@@ -145,6 +159,15 @@ jobs:
 
       # Every PR leaves a runnable exe behind, so the app can be tried on a
       # machine with no Go toolchain.
+      - name: Generate exe icon resource
+        run: go generate ./cmd/linkmon
+
+      - name: Verify exe icon resource
+        run: |
+          if (-not (Test-Path -LiteralPath cmd/linkmon/rsrc_windows_amd64.syso -PathType Leaf)) {
+            throw "generated exe icon resource is missing"
+          }
+
       - name: Build linkmon.exe
         run: go build -trimpath -ldflags "-s -w -H=windowsgui" -o linkmon.exe ./cmd/linkmon
 

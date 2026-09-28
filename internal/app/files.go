@@ -76,10 +76,17 @@ type Transfer struct {
 // Transfers moves files over Taildrop and remembers the recent ones so the UI
 // can list them. The list lives in memory and dies with the process.
 type Transfers struct {
-	mover FileMover
-	inbox string
-	max   int
-	now   func() time.Time
+	mover           FileMover
+	uploader        UploadMover
+	receiveGate     chan struct{}
+	startOnce       sync.Once
+	receiveWG       sync.WaitGroup
+	receiveInterval time.Duration
+	receiveTimeout  time.Duration
+	receiveErr      error
+	inbox           string
+	max             int
+	now             func() time.Time
 	// size reports a local file's length. It is a field so a test needs no real
 	// files; the default asks the filesystem.
 	size func(path string) (int64, error)
@@ -98,11 +105,14 @@ func NewTransfers(mover FileMover, inboxDir string, keep int) *Transfers {
 		keep = defaultMaxTransfers
 	}
 	return &Transfers{
-		mover: mover,
-		inbox: inboxDir,
-		max:   keep,
-		now:   time.Now,
-		size:  fileSize,
+		mover:           mover,
+		inbox:           inboxDir,
+		max:             keep,
+		receiveGate:     make(chan struct{}, 1),
+		receiveInterval: 2 * time.Second,
+		receiveTimeout:  10 * time.Minute,
+		now:             time.Now,
+		size:            fileSize,
 	}
 }
 
@@ -143,11 +153,23 @@ func (t *Transfers) Send(ctx context.Context, path, peer string) error {
 // one entry per file. Files that landed before an error are still reported:
 // they really did arrive.
 func (t *Transfers) Receive(ctx context.Context) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("receiving files: %w", err)
+	}
+	select {
+	case t.receiveGate <- struct{}{}:
+		defer func() { <-t.receiveGate }()
+	default:
+		return nil, ErrReceiveBusy
+	}
 	if t.mover == nil {
 		return nil, fmt.Errorf("draining the Taildrop inbox: %w", ErrNoTaildrop)
 	}
 
 	paths, err := t.mover.ReceiveFiles(ctx, t.inbox)
+	t.mu.Lock()
+	t.receiveErr = err
+	t.mu.Unlock()
 	for _, p := range paths {
 		size, sizeErr := t.size(p)
 		if sizeErr != nil {

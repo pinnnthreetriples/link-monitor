@@ -9,7 +9,7 @@ import (
 
 // theExe and theStart are one plausible instance, used wherever a test needs a
 // record that ought to be accepted.
-const theExe = `C:\Users\pnj\workspace-claude\link-monitor\linkmon.exe`
+const theExe = `C:\Apps\LinkMonitor\linkmon.exe`
 
 var theStart = time.Date(2026, 9, 8, 18, 10, 0, 1234500, time.UTC)
 
@@ -143,7 +143,7 @@ func TestConfirmAcceptsOnlyTheProcessThatPublishedTheRecord(t *testing.T) {
 		},
 		{
 			name:      "the path Windows reports differs only in case",
-			exe:       `c:\users\pnj\workspace-claude\link-monitor\LINKMON.EXE`,
+			exe:       `c:\apps\linkmonitor\LINKMON.EXE`,
 			startedAt: theStart,
 		},
 		{

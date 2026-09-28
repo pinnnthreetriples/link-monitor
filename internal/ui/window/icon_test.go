@@ -44,7 +44,8 @@ func TestIcoImagePicksTheSizeWindowsAskedFor(t *testing.T) {
 		{name: "an odd size takes the next one up", side: 17, want: 20},
 		{name: "the big icon", side: 32, want: 32},
 		{name: "a large icon takes the next one up", side: 40, want: 48},
-		{name: "beyond the largest, the largest is used", side: 256, want: 48},
+		{name: "the explorer-size icon", side: 256, want: 256},
+		{name: "beyond the largest, the largest is used", side: 300, want: 256},
 		{name: "a zero size takes the smallest", side: 0, want: 16},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

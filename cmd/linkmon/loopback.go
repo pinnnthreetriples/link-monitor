@@ -55,19 +55,21 @@ func finish(server *http.Server, serveErr <-chan error, trayErr error) error {
 
 // mount puts the API under /api/ and the UI everywhere else, so the whole
 // interface is one origin and needs no cross-origin rules.
-func mount(a *app.App, defaultPeer string) http.Handler {
+func mount(a *app.App, defaultPeer string, folder httpapi.FolderOpener) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/api/", httpapi.New(httpapi.Deps{
-		Status:      a.Poller,
-		Fixes:       a.Fixer,
-		History:     a.History,
-		Peers:       a.Peers,
-		Files:       a.Transfers,
-		Forwards:    a.Forwards,
-		Link:        a.Link,
-		Sync:        a.Folder,
-		Clip:        a.Clip,
-		DefaultPeer: defaultPeer,
+		Status:       a.Poller,
+		Fixes:        a.Fixer,
+		History:      a.History,
+		Peers:        a.Peers,
+		Files:        a.Transfers,
+		Uploads:      a.Transfers,
+		Forwards:     a.Forwards,
+		Link:         a.Link,
+		Sync:         a.Folder,
+		Clip:         a.Clip,
+		FolderOpener: folder,
+		DefaultPeer:  defaultPeer,
 	}))
 	mux.Handle("/", http.FileServerFS(linkmonitor.Assets()))
 	return mux

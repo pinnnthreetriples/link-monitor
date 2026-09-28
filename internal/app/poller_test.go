@@ -3,6 +3,9 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -181,6 +184,140 @@ func TestPollerCheckReturnsAFreshResult(t *testing.T) {
 	p.Wait()
 }
 
+type heldSequenceProbe struct {
+	*stubProbe
+	calls   atomic.Int32
+	started chan int
+	release [2]chan struct{}
+}
+
+type checkOutcome struct {
+	result Result
+	err    error
+}
+
+func (s *heldSequenceProbe) TailscaleUp(context.Context) (bool, string, error) {
+	n := int(s.calls.Add(1))
+	s.started <- n
+	if n <= len(s.release) {
+		<-s.release[n-1]
+	}
+	return false, fmt.Sprintf("run %d", n), nil
+}
+
+func TestPollerCheckWaitsForProbeRequestedDuringRunningProbe(t *testing.T) {
+	t.Parallel()
+
+	probe := &heldSequenceProbe{
+		stubProbe: newStubProbe(),
+		started:   make(chan int, 2),
+		release:   [2]chan struct{}{make(chan struct{}), make(chan struct{})},
+	}
+	p := newTestPoller(t, probe, time.Hour, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	p.Start(ctx)
+	defer func() {
+		for _, gate := range probe.release {
+			select {
+			case <-gate:
+			default:
+				close(gate)
+			}
+		}
+		cancel()
+		p.Wait()
+	}()
+
+	if n := <-probe.started; n != 1 {
+		t.Fatalf("startup probe = %d, want 1", n)
+	}
+	results := make(chan checkOutcome, 1)
+	go func() {
+		res, err := p.Check(context.Background())
+		results <- checkOutcome{result: res, err: err}
+	}()
+	waitFor(t, "the requested probe to be queued", func() bool { return len(p.nudge) == 1 })
+	close(probe.release[0])
+	if n := <-probe.started; n != 2 {
+		t.Fatalf("requested probe = %d, want 2", n)
+	}
+	select {
+	case <-results:
+		t.Fatal("Check returned the pre-existing probe's result")
+	default:
+	}
+	close(probe.release[1])
+	select {
+	case outcome := <-results:
+		if outcome.err != nil {
+			t.Fatalf("Check: %v", outcome.err)
+		}
+		if note := outcome.result.Snapshot.Checks[0].Note; !strings.Contains(note, "run 2") {
+			t.Fatalf("Check returned note %q, want result from run 2", note)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Check did not return the requested probe's result")
+	}
+}
+
+func TestPollerConcurrentChecksShareTheRequestedProbe(t *testing.T) {
+	t.Parallel()
+
+	probe := &heldSequenceProbe{
+		stubProbe: newStubProbe(),
+		started:   make(chan int, 2),
+		release:   [2]chan struct{}{make(chan struct{}), make(chan struct{})},
+	}
+	p := newTestPoller(t, probe, time.Hour, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	p.Start(ctx)
+	defer func() {
+		for _, gate := range probe.release {
+			select {
+			case <-gate:
+			default:
+				close(gate)
+			}
+		}
+		cancel()
+		p.Wait()
+	}()
+	<-probe.started
+
+	results := make(chan checkOutcome, 2)
+	for range 2 {
+		go func() {
+			res, err := p.Check(context.Background())
+			results <- checkOutcome{result: res, err: err}
+		}()
+	}
+	waitFor(t, "both requests to join the next probe", func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return len(p.checks) == 2
+	})
+	close(probe.release[0])
+	<-probe.started
+	close(probe.release[1])
+	for range 2 {
+		select {
+		case outcome := <-results:
+			if outcome.err != nil {
+				t.Fatalf("Check: %v", outcome.err)
+			}
+			if note := outcome.result.Snapshot.Checks[0].Note; !strings.Contains(note, "run 2") {
+				t.Fatalf("Check returned note %q, want shared result from run 2", note)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("concurrent Check did not return")
+		}
+	}
+	if calls := probe.calls.Load(); calls != 2 || len(p.nudge) != 0 {
+		t.Fatalf("concurrent checks caused %d probes with %d extra nudges, want two probes", calls,
+			len(p.nudge))
+	}
+}
+
 func TestPollerCheckOnAStoppedPollerSaysSo(t *testing.T) {
 	t.Parallel()
 
@@ -219,6 +356,39 @@ func TestPollerCheckHonoursTheCallersContext(t *testing.T) {
 	close(probe.hold)
 	cancel()
 	p.Wait()
+}
+
+func TestPollerCheckStopsWaitingWhenCallerCancels(t *testing.T) {
+	t.Parallel()
+
+	probe := newStubProbe()
+	probe.hold = make(chan struct{})
+	p := newTestPoller(t, probe, time.Hour, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	p.Start(ctx)
+	defer func() {
+		close(probe.hold)
+		cancel()
+		p.Wait()
+	}()
+	<-probe.runs
+
+	callCtx, callCancel := context.WithCancel(context.Background())
+	results := make(chan error, 1)
+	go func() {
+		_, err := p.Check(callCtx)
+		results <- err
+	}()
+	waitFor(t, "the check to be queued", func() bool { return len(p.nudge) == 1 })
+	callCancel()
+	select {
+	case err := <-results:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Check after caller cancellation = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Check did not stop waiting after caller cancellation")
+	}
 }
 
 func TestPollerCancellationClosesSubscribersAndLeavesNothingRunning(t *testing.T) {

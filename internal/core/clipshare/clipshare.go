@@ -3,7 +3,7 @@
 // to the other machine?
 //
 // It is pure, and deliberately so. Four of the five rules the shared clipboard
-// is built on are decisions rather than syscalls — text only, a size cap,
+// is built on are decisions rather than syscalls — text and PNG, size caps,
 // Windows' own "do not record this" markers, and the item that must not bounce
 // back — and a decision that lives in a polling loop next to a Win32 call is a
 // decision nobody can test. Everything impure is above: reading and writing the
@@ -72,8 +72,11 @@ func Zero(b []byte) {
 // nothing anybody meant to keep private is read into this process merely to be
 // rejected — and in that case Bytes is the real size and Text is nil.
 type Snapshot struct {
+	// Format is empty for legacy text, or png for a normalized image.
+	// Text carries the bounded bytes for either kind and is always zeroed by its owner.
+	Format string
 	// HasText says the clipboard offered CF_UNICODETEXT at all. False is a
-	// file, an image, an HTML-only or RTF-only item, or an empty clipboard.
+	// file, an HTML-only or RTF-only item, or an empty clipboard.
 	HasText bool
 	// Bytes is the item's size in UTF-8 bytes, whether or not Text was copied.
 	Bytes int
@@ -92,8 +95,8 @@ type Why string
 const (
 	// WhySend is the only verdict that transmits.
 	WhySend Why = "send"
-	// WhyNotText is an item with no text in it: a file, an image, an
-	// HTML-only or RTF-only flavour. Rule 2 carries text and nothing else.
+	// WhyNotText is an item with no supported content: a file, HTML-only or
+	// RTF-only flavour. PNG has its own format and cap.
 	WhyNotText Why = "not_text"
 	// WhyEmpty is an empty clipboard, or a size with no content behind it.
 	WhyEmpty Why = "empty"
@@ -154,8 +157,11 @@ func Decide(s Snapshot, mem Memory, maxBytes int) (Why, Print) {
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxBytes
 	}
+	if s.Format == "png" {
+		maxBytes = MaxImageBytes
+	}
 	switch {
-	case !s.HasText:
+	case s.Format != "" && s.Format != "png", !s.HasText && s.Format != "png":
 		return WhyNotText, Print{}
 	case !s.Recordable:
 		return WhyMarked, Print{}
@@ -169,6 +175,9 @@ func Decide(s Snapshot, mem Memory, maxBytes int) (Why, Print) {
 	}
 
 	p := Fingerprint(s.Text)
+	if s.Format == "png" {
+		p = ImageFingerprint(s.Text)
+	}
 	switch {
 	case mem.havePlanted && p == mem.planted:
 		// We wrote this here a moment ago after receiving it. Sending it back

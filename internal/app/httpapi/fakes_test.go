@@ -197,7 +197,7 @@ func do(t *testing.T, h http.Handler, method, path, body string) *httptest.Respo
 	} else {
 		reader = strings.NewReader(body)
 	}
-	req := httptest.NewRequest(method, path, reader)
+	req := httptest.NewRequest(method, "http://127.0.0.1:8731"+path, reader)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec

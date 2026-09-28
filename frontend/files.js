@@ -1,11 +1,6 @@
-/* Link Monitor — the Файлы tab: direction switch, drop zone, Taildrop send and
-   receive, and the list of transfers the app reports.
-
-   The drop zone problem, spelled out: a browser hands JavaScript a File object,
-   never its path on disk. So a dropped or picked file is sent by NAME, and the
-   server decides what that name refers to; the text field next to the zone is
-   there for the case where only a full path will do. Nothing is guessed here —
-   the server's Russian answer is what the user sees. */
+/* Browser File objects are streamed to the local API. A filename is display
+   metadata, never a path to guess on disk. The explicit path form remains for
+   files opened via Explorer's context menu or typed by a power user. */
 
 (function () {
   'use strict';
@@ -16,6 +11,7 @@
 
   var dir = 'send';
   var pollTimer = null;
+  var sending = false;
 
   var OUTGOING = { to: 1, send: 1, sent: 1, out: 1, outgoing: 1, up: 1, tx: 1 };
   var DONE = { ok: 1, done: 1, complete: 1, completed: 1, finished: 1 };
@@ -79,7 +75,7 @@
     $('drop-sub').textContent = peer
       ? 'или нажмите, чтобы выбрать файл — уйдёт на ' + peer
       : 'или нажмите, чтобы выбрать файл';
-    $('drop-cmd').textContent = 'tailscale file cp <файл> ' + (peer || '<машина>') + ':';
+    $('drop-cmd').textContent = 'Файл откроется на второй машине автоматически';
   }
 
   function fillPeers(peers) {
@@ -176,6 +172,7 @@
   /* ---------------- sending ---------------- */
 
   function busy(on) {
+    sending = on;
     $('send-btn').disabled = on;
     $('send-btn').textContent = on ? 'Отправляю…' : 'Отправить';
     $('drop').disabled = on;
@@ -206,16 +203,46 @@
     });
   }
 
-  // Files arrive from the browser without a path — only a name. Send the names
-  // one at a time so each answer from the server is seen.
-  function sendFileList(files) {
-    var names = [];
-    for (var i = 0; i < files.length; i += 1) { names.push(files[i].name); }
-    if (names.length === 0) { return; }
+  function upload(file, peer) {
+    var form = new FormData();
+    form.append('file', file, file.name);
+    return fetch('/api/files/upload?peer=' + encodeURIComponent(peer), {
+      method: 'POST', body: form, credentials: 'same-origin'
+    }).then(function (response) {
+      return response.json().then(function (body) {
+        if (!response.ok || !body.ok) { throw new Error(body.message || 'Отправить не удалось.'); }
+        return body;
+      });
+    });
+  }
 
+  // Send one file at a time; each response belongs to the correct filename.
+  function sendFileList(files) {
+    var picked = Array.prototype.slice.call(files || []);
+    if (!picked.length || sending) { return; }
+    var peer = peerName();
+    if (!peer) {
+      LM.showMsg($('files-msg'), 'Выберите компьютер для отправки.', 'warn');
+      return;
+    }
+    busy(true);
     var chain = Promise.resolve();
-    names.forEach(function (name) {
-      chain = chain.then(function () { return send(name); });
+    var sent = 0;
+    picked.forEach(function (file) {
+      chain = chain.then(function () {
+        LM.showMsg($('files-msg'), 'Отправляю: ' + file.name, 'off');
+        return upload(file, peer).then(function () { sent += 1; });
+      });
+    });
+    chain.then(function () {
+      var message = sent === 1 ? 'Файл отправлен.' : 'Отправлено файлов: ' + sent + '.';
+      LM.showMsg($('files-msg'), message, 'ok');
+      LM.pushLog(message, 'ok');
+    }, function (err) {
+      LM.showMsg($('files-msg'), LM.errText(err), 'err');
+    }).then(function () {
+      busy(false);
+      loadTransfers();
     });
   }
 
@@ -274,16 +301,11 @@
         sendFileList(dt.files);
         return;
       }
-      // Something dropped a path as text (Explorer address bar, a terminal):
-      // that IS a real path, so it goes straight through.
+      // A literal path from a terminal may still use the explicit path sender.
       var text = dt.getData ? (dt.getData('text/plain') || '') : '';
       text = text.trim().replace(/^"|"$/g, '');
       if (text) { send(text); }
     });
-
-    // A drop that misses the zone must not turn the window into a file viewer.
-    // That guard covers the whole window, so it lives in desktop.js with the
-    // rest of the window's behaviour rather than in this tab.
 
     zone.addEventListener('click', function () { input.click(); });
     input.addEventListener('change', function () {
@@ -319,6 +341,34 @@
   $('xfers-refresh').addEventListener('click', loadTransfers);
 
   initDrop();
+  // Native WebView2 file drops can land anywhere, not only on the drop zone.
+  window.addEventListener('drop', function (ev) {
+    if (!ev.dataTransfer || !ev.dataTransfer.files.length) { return; }
+    ev.preventDefault();
+    $('tab-files').click();
+    dir = 'send';
+    paintDirection();
+    sendFileList(ev.dataTransfer.files);
+  });
+  document.addEventListener('paste', function (ev) {
+    var target = ev.target;
+    if (target && (target.isContentEditable || /^(INPUT|TEXTAREA)$/.test(target.tagName))) { return; }
+    var data = ev.clipboardData;
+    if (!data || !data.files || !data.files.length) { return; }
+    var files = [];
+    for (var i = 0; i < data.files.length; i += 1) {
+      var file = data.files[i];
+      if (file.type === 'image/png' && !file.name) {
+        file = new File([file], 'Скриншот-' + Date.now() + '.png', { type: file.type });
+      }
+      files.push(file);
+    }
+    ev.preventDefault();
+    $('tab-files').click();
+    dir = 'send';
+    paintDirection();
+    sendFileList(files);
+  });
   paintDirection();
   fillPeers(LM.state.peers);
 

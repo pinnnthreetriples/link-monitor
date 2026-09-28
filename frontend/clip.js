@@ -140,7 +140,7 @@
     var parts = [];
     if (counts.marked) { parts.push('запрещено программой-источником: ' + counts.marked); }
     if (counts.tooBig) { parts.push('больше допустимого: ' + counts.tooBig); }
-    if (counts.notText) { parts.push('не текст: ' + counts.notText); }
+    if (counts.notText) { parts.push('другой формат: ' + counts.notText); }
     return parts.length ? parts.join(' · ') : '';
   }
 
@@ -152,7 +152,7 @@
     if (!data.available) { return; }
 
     row(kv, 'Вторая машина', data.peer || '—', true);
-    row(kv, 'Не передаём текст больше', data.maxSize || '—');
+    row(kv, 'Лимит текста', data.maxSize || '—');
     row(kv, 'За этот запуск', countsWord(data.counts || {}));
 
     var skipped = skippedWord(data.counts || {});

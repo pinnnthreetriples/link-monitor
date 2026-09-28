@@ -23,13 +23,22 @@
   <header class="hdr">
     <div class="hdr-left">
       <div class="hdr-mark" aria-hidden="true">
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5l5-5"></path><path d="M8 12l-1.8 1.8a3.5 3.5 0 105 5L13 17"></path><path d="M16 12l1.8-1.8a3.5 3.5 0 10-5-5L11 7"></path></svg>
+        <img src="favicon.svg" width="36" height="36" alt="">
       </div>
       <div>
         <div class="hdr-title">Link Monitor</div>
-        <div class="hdr-sub mono">tailscale + ssh</div>
+        <div class="hdr-sub">Ноутбук и ПК — рядом</div>
       </div>
     </div>
+    <div class="hdr-actions">
+    <button type="button" class="icon-btn" id="shared-folder-btn"
+            aria-label="Открыть общую папку" title="Открыть общую папку">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>
+        <path d="M3 9h18"/>
+      </svg>
+    </button>
     <button type="button" class="icon-btn" id="theme-btn" aria-label="Переключить тему">
       <span id="theme-ico-dark" hidden>
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
@@ -38,7 +47,10 @@
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8.5 8.5 0 019.5 4a8.5 8.5 0 1010.5 10.5z"></path></svg>
       </span>
     </button>
+    </div>
   </header>
+
+  <div class="msg" id="shared-folder-msg" hidden role="status"></div>
 
   <!-- ---------- API unreachable ---------- -->
   <div class="banner" id="offline-banner" hidden role="alert">
@@ -211,10 +223,10 @@
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15.5V4"></path><path d="M8 8l4-4 4 4"></path><path d="M4 15v3.5a1.8 1.8 0 001.8 1.8h12.4a1.8 1.8 0 001.8-1.8V15"></path></svg>
         </span>
         <span>
-          <span class="drop-title">Перетащите файлы сюда</span>
-          <span class="drop-sub" id="drop-sub">или нажмите, чтобы выбрать файл</span>
+          <span class="drop-title">Перетащите файл в окно</span>
+          <span class="drop-sub" id="drop-sub">или нажмите, чтобы выбрать файл или скриншот</span>
         </span>
-        <span class="drop-cmd mono" id="drop-cmd">tailscale file cp &lt;файл&gt; &lt;машина&gt;:</span>
+        <span class="drop-cmd" id="drop-cmd">Файл откроется на второй машине автоматически</span>
       </button>
       <input type="file" id="file-input" class="sr-only" multiple>
 
@@ -224,7 +236,7 @@
           <input type="text" class="input mono" id="path-input" placeholder="C:\Users\pnj\Downloads\dump.sql"
                  spellcheck="false" autocomplete="off">
         </div>
-        <p class="hint" id="path-hint">Диалог выбора файла отдаёт приложению только имя, без пути на диске. Если файл лежит не в папке загрузок, укажите полный путь здесь: так приложение найдёт его наверняка.</p>
+        <p class="hint" id="path-hint">Дополнительный способ: укажите путь к файлу на этом компьютере. Для обычной отправки просто перетащите файл выше.</p>
         <div class="form-row">
           <button type="button" class="btn btn-sm btn-grow" id="send-btn">Отправить</button>
         </div>
@@ -233,7 +245,7 @@
 
     <div id="recv-block" hidden>
       <div class="card form">
-        <p class="hint">Приложение заберёт то, что вторая машина уже отправила через Taildrop, и положит в папку загрузок.</p>
+        <p class="hint">Новые файлы принимаются автоматически в папку загрузок. Кнопка проверяет входящие прямо сейчас.</p>
         <button type="button" class="btn btn-sm" id="recv-btn">Принять входящие файлы</button>
       </div>
     </div>
@@ -273,7 +285,7 @@
          one anchor so that this shared page has one line about it, not forty. -->
     <div class="sect" id="sync-sect"></div>
 
-    <!-- The shared clipboard, off until the user switches it on. clip.js fills
+    <!-- The shared clipboard starts off until the user enables it. clip.js fills
          this in, for the same reason and in the same way. -->
     <div class="sect" id="clip-sect"></div>
 
@@ -379,5 +391,6 @@
      longer offers, desktop.js decides where one belongs. -->
 <script src="menu.js" defer></script>
 <script src="desktop.js" defer></script>
+<script src="shared-folder.js" defer></script>
 </body>
 </html>

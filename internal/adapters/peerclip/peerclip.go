@@ -9,7 +9,7 @@
 // in the session OpenSSH gives it — not the user's — so a copy of this program
 // started over SSH would set a clipboard nobody can see. The peer's *own*
 // instance, the one running in the user's session behind the tray icon, is the
-// only thing that can put text on the peer's clipboard. This package's whole
+// only thing that can put an item on the peer's clipboard. This package's whole
 // job is to reach it.
 //
 // # How it reaches it

@@ -34,9 +34,10 @@ type Deps struct {
 	// The two halves of the shared clipboard: this machine's clipboard and the
 	// program's own instance on the peer. Both nil leaves the feature
 	// unavailable rather than broken, and Clip.Available reports as much.
-	// Neither of them is touched until the user switches sharing on.
-	ClipHere Clipboard
-	ClipPeer PeerInbox
+	// Sharing is enabled at process start when Clip.EnableOnStart is set.
+	ClipHere  Clipboard
+	ClipPeer  PeerInbox
+	ClipSaved SavedScreenshots
 }
 
 // Config is what the application needs to know about the two machines and how
@@ -64,7 +65,7 @@ type Config struct {
 	// leaves the feature off, which is what rule 5 asks for.
 	Sync FolderConfig
 	// Clip describes the shared clipboard. Its zero value is the defaults, and
-	// it is switched off either way: nothing but a user action turns it on.
+	// command wiring leaves it off until the user enables it.
 	Clip ClipConfig
 }
 
@@ -85,8 +86,8 @@ type App struct {
 	// Folder is the shared folder. It is always built and is switched off
 	// unless a folder was chosen, so the UI has something to ask either way.
 	Folder *Folder
-	// Clip is the shared clipboard. It is always built and always starts
-	// switched off, so the UI has something to ask and something to switch.
+	// Clip is the shared clipboard. It is always built, so the UI can show
+	// whether startup activation succeeded and offer a pause switch.
 	Clip *Clip
 
 	ctx context.Context
@@ -122,19 +123,19 @@ func New(ctx context.Context, cfg Config, d Deps) *App {
 		Folder: NewFolder(cfg.Sync, FolderDeps{
 			Here: d.SyncHere, There: d.SyncPeer, History: d.SyncState,
 		}),
-		Clip: NewClip(cfg.Clip, ClipDeps{Here: d.ClipHere, There: d.ClipPeer}),
+		Clip: NewClip(cfg.Clip, ClipDeps{Here: d.ClipHere, There: d.ClipPeer, Saved: d.ClipSaved}),
 		ctx:  ctx,
 	}
 }
 
 // Start begins polling, sweeping the shared folder when one was chosen, and
-// watching the clipboard — which does nothing at all until the user switches
-// sharing on. It returns at once; every loop stops when the lifetime context
+// watching the clipboard. It returns at once; every loop stops when the lifetime context
 // ends.
 func (a *App) Start() {
 	a.Poller.Start(a.ctx)
 	a.Folder.Start(a.ctx)
 	a.Clip.Start(a.ctx)
+	a.Transfers.Start(a.ctx)
 }
 
 // Close stops every port forward and waits for the poller and the folder sweep
@@ -148,5 +149,6 @@ func (a *App) Close() error {
 	a.Poller.Wait()
 	a.Folder.Wait()
 	a.Clip.Wait()
+	a.Transfers.Wait()
 	return err
 }

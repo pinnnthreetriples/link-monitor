@@ -58,7 +58,9 @@ type Poller struct {
 
 	mu        sync.Mutex
 	subs      map[int]chan Result
+	checks    map[chan Result]uint64
 	nextID    int
+	completed uint64
 	latest    Result
 	hasLatest bool
 	checking  bool
@@ -75,9 +77,10 @@ func NewPoller(cfg PollerConfig) *Poller {
 		cfg.Timeout = DefaultProbeTimeout
 	}
 	return &Poller{
-		cfg:   cfg,
-		nudge: make(chan struct{}, 1),
-		subs:  make(map[int]chan Result),
+		cfg:    cfg,
+		nudge:  make(chan struct{}, 1),
+		subs:   make(map[int]chan Result),
+		checks: make(map[chan Result]uint64),
 	}
 }
 
@@ -162,6 +165,13 @@ func (p *Poller) publish(res Result) {
 	defer p.mu.Unlock()
 
 	p.latest, p.hasLatest, p.checking = res, true, false
+	p.completed++
+	for ch, target := range p.checks {
+		if p.completed >= target {
+			ch <- res
+			delete(p.checks, ch)
+		}
+	}
 	for _, ch := range p.subs {
 		select {
 		case ch <- res:
@@ -188,6 +198,10 @@ func (p *Poller) shutdown() {
 	p.running, p.stopped, p.checking = false, true, false
 	for id, ch := range p.subs {
 		delete(p.subs, id)
+		close(ch)
+	}
+	for ch := range p.checks {
+		delete(p.checks, ch)
 		close(ch)
 	}
 }
@@ -237,20 +251,27 @@ func (p *Poller) CheckNow() {
 // Check asks for an immediate probe and waits for its result. It is what the
 // "проверить сейчас" button is built on.
 //
-// It waits on a subscription rather than probing inline, so the loop stays the
-// only prober and two simultaneous requests cost one probe between them.
+// The loop stays the only prober, and requests made during the same in-flight
+// probe share the next probe rather than returning that in-flight result.
 func (p *Poller) Check(ctx context.Context) (Result, error) {
 	p.mu.Lock()
-	running := p.running
-	p.mu.Unlock()
-	if !running {
+	if !p.running {
+		p.mu.Unlock()
 		return Result{}, ErrPollerStopped
 	}
-
-	ch, cancel := p.Subscribe()
-	defer cancel()
+	ch := make(chan Result, 1)
+	target := p.completed + 1
+	if p.checking {
+		target++
+	}
+	p.checks[ch] = target
 	p.CheckNow()
-
+	p.mu.Unlock()
+	defer func() {
+		p.mu.Lock()
+		delete(p.checks, ch)
+		p.mu.Unlock()
+	}()
 	select {
 	case res, ok := <-ch:
 		if !ok {

@@ -24,19 +24,11 @@ var palette = map[core.State]color.NRGBA{
 // Sizes are the square sizes packed into every icon. Windows asks for the
 // 32x32 entry when it loads the file and then scales it down to the tray's
 // 16x16 (or a DPI multiple of it), so shipping only 16 would look soft.
-var Sizes = []int{16, 20, 24, 32, 48}
+var Sizes = []int{16, 20, 24, 32, 48, 64, 128, 256}
 
 const (
-	// minSize is the smallest icon the disc still reads at.
+	// minSize preserves the public drawing size range.
 	minSize = 8
-	// insetRatio is the transparent margin around the disc, as a fraction of
-	// the icon's side. Tray icons sit shoulder to shoulder; a little air keeps
-	// this one from touching its neighbours.
-	insetRatio = 0.09
-	// ringRatio is the width of the darker outline, as a fraction of the side.
-	// It is what keeps the disc visible against both a light and a dark
-	// taskbar, which is the one thing a flat colour cannot do on its own.
-	ringRatio = 0.10
 	// ringShade multiplies the fill to get the outline colour.
 	ringShade = 0.55
 )
@@ -51,22 +43,28 @@ func Color(s core.State) color.NRGBA {
 	return palette[core.StateUnknown]
 }
 
-// Draw renders one state as a square, anti-aliased disc of the given side in
-// pixels: a filled circle in the state's colour inside a darker ring.
+// Draw renders two linked screens on a state-coloured rounded tile. Geometry
+// uses a 16 px grid so the smallest tray entry keeps open screen apertures.
 func Draw(s core.State, size int) (*image.NRGBA, error) {
 	if size < minSize || size > icoMaxDim {
 		return nil, fmt.Errorf("trayicon: size %d px is outside %d..%d", size, minSize, icoMaxDim)
 	}
 
 	fill := Color(s)
-	side := float64(size)
-	centre := side / 2
-	outer := centre - side*insetRatio
-	inner := outer - side*ringRatio
-
 	img := image.NewNRGBA(image.Rect(0, 0, size, size))
-	paint(img, disc{cx: centre, cy: centre, r: outer, size: size}, shade(fill, ringShade))
-	paint(img, disc{cx: centre, cy: centre, r: inner, size: size}, fill)
+	box := func(x, y, w, h, radius float64, c color.NRGBA) {
+		paint(img, roundedBox{x: x, y: y, w: w, h: h, r: radius, size: size}, c)
+	}
+	box(1, 1, 14, 14, 3.5, shade(fill, ringShade))
+	box(1.5, 1.5, 13, 13, 3, fill)
+	ink := color.NRGBA{R: 0xf4, G: 0xf8, B: 0xfc, A: 0xff}
+	// An elbow joins the lower edge of the first screen to the second.
+	box(5.5, 6, 1.5, 5.75, 0.65, ink)
+	box(5.5, 10.25, 3, 1.5, 0.65, ink)
+	for _, origin := range [][2]float64{{3, 3}, {7, 9}} {
+		box(origin[0], origin[1], 6, 4, 0.8, ink)
+		box(origin[0]+1, origin[1]+1, 4, 2, 0.2, shade(fill, 0.30))
+	}
 	return img, nil
 }
 
@@ -109,20 +107,24 @@ func shade(c color.NRGBA, f float64) color.NRGBA {
 	return color.NRGBA{R: scale(c.R), G: scale(c.G), B: scale(c.B), A: c.A}
 }
 
-// disc is an alpha mask for a filled circle. The edge fades over one pixel,
-// which is all the anti-aliasing a 16 px dot needs and costs no dependency.
-type disc struct {
-	cx, cy, r float64
-	size      int
+// roundedBox is a signed-distance alpha mask. Coverage fades over one output
+// pixel at every size, keeping transparent edges smooth without blurring the
+// one-pixel screen frames at 16 px.
+type roundedBox struct {
+	x, y, w, h, r float64
+	size          int
 }
 
-func (d disc) ColorModel() color.Model { return color.AlphaModel }
+func (b roundedBox) ColorModel() color.Model { return color.AlphaModel }
 
-func (d disc) Bounds() image.Rectangle { return image.Rect(0, 0, d.size, d.size) }
+func (b roundedBox) Bounds() image.Rectangle { return image.Rect(0, 0, b.size, b.size) }
 
-func (d disc) At(x, y int) color.Color {
-	dist := math.Hypot(float64(x)+0.5-d.cx, float64(y)+0.5-d.cy)
-	switch cover := d.r + 0.5 - dist; {
+func (b roundedBox) At(x, y int) color.Color {
+	scale := float64(b.size) / 16
+	qx := math.Abs((float64(x)+0.5)/scale-b.x-b.w/2) - b.w/2 + b.r
+	qy := math.Abs((float64(y)+0.5)/scale-b.y-b.h/2) - b.h/2 + b.r
+	dist := math.Hypot(math.Max(qx, 0), math.Max(qy, 0)) + math.Min(math.Max(qx, qy), 0) - b.r
+	switch cover := 0.5 - dist*scale; {
 	case cover <= 0:
 		return color.Alpha{A: 0}
 	case cover >= 1:
