@@ -80,7 +80,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -171,7 +171,7 @@ jobs:
       - name: Build linkmon.exe
         run: go build -trimpath -ldflags "-s -w -H=windowsgui" -o linkmon.exe ./cmd/linkmon
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: linkmon-exe
           path: linkmon.exe
