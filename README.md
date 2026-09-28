@@ -114,9 +114,16 @@ gofumpt -l -w .
 Детектору гонок нужен C-компилятор (`CGO_ENABLED=1` и `CC`). В CI он есть;
 локально на Windows его придётся поставить отдельно.
 
-Проверки, которые меняют настоящий буфер Windows, запускаются отдельно:
-приостановите обмен в окне или трее и выполните
-`$env:LINKMON_TEST_REAL_CLIPBOARD=1; go test ./internal/adapters/clipboard -count=1`.
+Проверки, которые меняют настоящий буфер Windows, запускаются отдельно.
+Приостановите обмен в окне или трее, замените содержимое буфера одноразовой
+строкой и выполните:
+
+```powershell
+Set-Clipboard -Value 'LinkMonitor clipboard test fixture'
+$env:LINKMON_TEST_REAL_CLIPBOARD = '1'
+go test ./internal/adapters/clipboard -count=1
+```
+
 Обычный `go test ./...` не трогает системный буфер.
 
 Правила проекта — границы слоёв, лимиты размеров файлов, требования к тестам —

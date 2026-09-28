@@ -27,8 +27,8 @@ type ClipShare interface {
 	// rather than switched off, and it is settled by how the program was
 	// started; see [Config.Clip] for what the tray does about it.
 	Available() bool
-	// On reports whether the user has switched sharing on. It starts false
-	// every time the program starts, and nothing but a user action sets it.
+	// On reports whether sharing is active. Command wiring enables it on
+	// startup; the user can pause or resume it from the tray or window.
 	On() bool
 	// TurnOn starts sharing and reports whether it could. It fails when the
 	// clipboard itself cannot be reached — a locked screen, or a session other
