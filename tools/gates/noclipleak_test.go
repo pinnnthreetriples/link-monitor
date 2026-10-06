@@ -110,6 +110,8 @@ var mayCarryText = map[string]string{
 	"Look":    "app.Clipboard.Look: takes a size, never content — listed for the cap argument",
 
 	"post":       "peerclip.post: builds the one request this feature makes and sends it",
+	"via":        "peerclip.via: holds the item only in the closure that calls post or postImage",
+	"postImage":  "peerclip.postImage: the one image request this feature makes",
 	"encodeItem": "peerclip.encodeItem: the one JSON body this feature sends",
 	"Marshal":    "encoding/json, inside encodeItem",
 	"NewReader":  "bytes.NewReader, wrapping that body for one request",

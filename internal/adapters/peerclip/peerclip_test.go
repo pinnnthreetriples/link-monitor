@@ -124,13 +124,24 @@ type inbox struct {
 	method string
 	status int
 	answer string
+	pid    int // what GET /api/whoami answers; 0 answers 404, as an older build would
+	posts  int
 }
 
 func newInbox(t *testing.T) *inbox {
 	t.Helper()
 
-	in := &inbox{status: http.StatusOK, answer: `{"ok":true,"message":"Принято."}`}
+	in := &inbox{status: http.StatusOK, answer: `{"ok":true,"message":"Принято."}`, pid: peerPID}
 	in.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/"+whoamiPath {
+			if in.pid == 0 {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"pid":%d}`, in.pid)
+			return
+		}
+		in.posts++
 		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		in.body, in.path, in.method = string(body), r.URL.Path, r.Method
 		w.Header().Set("Content-Type", "application/json")
@@ -195,7 +206,8 @@ func TestTheForwardIsClosedAfterEveryItem(t *testing.T) {
 	in := newInbox(t)
 	tunnel := &fakeTunnel{addr: in.addr()}
 	shell := &fakeShell{stdout: liveAnswer(t, record(), liveProcess())}
-	peer := New(shell, &fakeForwarder{tunnel: tunnel}, peerName)
+	fwd := &fakeForwarder{tunnel: tunnel}
+	peer := New(shell, fwd, peerName)
 
 	if err := peer.Deliver(context.Background(), []byte(theItem)); err != nil {
 		t.Fatalf("Deliver() = %v", err)
@@ -204,8 +216,8 @@ func TestTheForwardIsClosedAfterEveryItem(t *testing.T) {
 	if err := peer.Deliver(context.Background(), []byte(theItem)); err == nil {
 		t.Fatal("Deliver() = nil after the instance refused the item")
 	}
-	if tunnel.closed != 2 {
-		t.Errorf("the forward was closed %d times for two items, want 2", tunnel.closed)
+	if fwd.opened < 2 || tunnel.closed != fwd.opened {
+		t.Errorf("the forward was opened %d times and closed %d", fwd.opened, tunnel.closed)
 	}
 }
 

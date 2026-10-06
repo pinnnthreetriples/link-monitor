@@ -157,6 +157,7 @@ func New(deps Deps) http.Handler {
 	// it is argued where it is handled, in clip.go.
 	mux.HandleFunc("POST /api/clip/receive", s.handleClipReceive)
 	mux.HandleFunc("POST /api/clip/image", s.handleClipImage)
+	mux.HandleFunc("GET /api/whoami", s.handleWhoami)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 
 	// A path that exists but was asked for with the wrong method answers in the
@@ -177,7 +178,7 @@ var apiPaths = []string{
 	"/api/forward", "/api/serve", "/api/link", "/api/events",
 	"/api/sync", "/api/sync/run", "/api/sync/open",
 	"/api/clip", "/api/clip/on", "/api/clip/off", "/api/clip/receive",
-	"/api/clip/image",
+	"/api/clip/image", "/api/whoami",
 }
 
 // guardOrigin checks the Host even when Origin is absent, since DNS rebinding

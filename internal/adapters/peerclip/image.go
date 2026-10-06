@@ -16,23 +16,11 @@ func (p *Peer) DeliverImage(ctx context.Context, image []byte) error {
 		return fmt.Errorf("validating image for %s: %w", p.name, err)
 	}
 	clipshare.Zero(decoded.Pix)
-	rec, err := p.Record(ctx)
-	if err != nil {
-		return err
-	}
-	port, err := rec.Port()
-	if err != nil {
-		return fmt.Errorf("reading %s's endpoint: %w", p.name, err)
-	}
-	tunnel, err := p.fwd.LocalForward(ctx, 0, loopback, port)
-	if err != nil {
-		return fmt.Errorf("forwarding %s's image port: %w", p.name, err)
-	}
-	defer func() { _ = tunnel.Close() }()
-	addr, err := tunnelAddr(tunnel)
-	if err != nil {
-		return err
-	}
+	return p.via(ctx, func(addr string) error { return p.postImage(ctx, addr, image) })
+}
+
+// postImage sends the PNG through the tunnel to the peer's instance.
+func (p *Peer) postImage(ctx context.Context, addr string, image []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		"http://"+addr+"/api/clip/image", bytes.NewReader(image))
 	if err != nil {
