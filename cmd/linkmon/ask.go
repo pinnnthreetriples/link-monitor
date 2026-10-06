@@ -52,7 +52,9 @@ func askMode(o options) int {
 		fmt.Fprintf(os.Stderr, "%v\n%s\n%s\n", err, stdout, stderr)
 		return 1
 	}
-	fmt.Fprintln(os.Stdout, answer.Result)
+	if _, err := fmt.Fprintln(os.Stdout, answer.Result); err != nil {
+		return 1 // stdout is gone; there is nowhere left to say so
+	}
 	fmt.Fprintf(os.Stderr, "[session %s]\n", answer.SessionID)
 	if answer.IsError {
 		return 1
@@ -108,7 +110,7 @@ func randomName() (string, error) {
 func uploadTask(ctx context.Context, ssh *sshx.Lazy, rel, prompt string) error {
 	client, err := ssh.SFTP(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("opening sftp for the task file: %w", err)
 	}
 	defer func() { _ = client.Close() }() // the file is already written and closed below
 	f, err := client.Create(rel)
@@ -175,5 +177,5 @@ func readAskAnswer(stdout string) (askAnswer, error) {
 			return a, nil
 		}
 	}
-	return askAnswer{}, errors.New("Claude на второй машине не ответил JSON")
+	return askAnswer{}, errors.New("второй компьютер не вернул JSON от Claude")
 }
