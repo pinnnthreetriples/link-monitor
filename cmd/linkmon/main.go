@@ -84,6 +84,8 @@ func start() int {
 		return sendMode(o)
 	case o.menu != "":
 		return menuMode(o.menu)
+	case o.ask != "":
+		return askMode(o)
 	}
 
 	release, err := winlock.Acquire(lockName)
@@ -181,6 +183,11 @@ type options struct {
 	// install, remove or status. The tray's own checkable item is how a person
 	// does it; this is for an installer script and for looking. See menu.go.
 	menu string
+	// ask is a task for Claude Code on the peer, or "-" to read it from
+	// stdin; the answer is printed and the program exits. See ask.go.
+	ask       string
+	askResume string
+	askDir    string
 }
 
 func parseOptions() options {
@@ -216,6 +223,10 @@ func parseOptions() options {
 	flag.StringVar(&o.send, "send", "", "отправить этот файл на второй компьютер и выйти")
 	flag.StringVar(&o.menu, "menu", "",
 		"пункт «Отправить на ПК» в Проводнике: install — добавить, remove — убрать, status — проверить")
+	flag.StringVar(&o.ask, "ask", "",
+		"дать задачу Claude Code на второй машине и напечатать ответ; - читать из stdin")
+	flag.StringVar(&o.askResume, "ask-resume", "", "id сессии Claude для продолжения разговора")
+	flag.StringVar(&o.askDir, "ask-dir", "", "рабочая папка Claude на второй машине")
 	flag.Parse()
 	return o
 }
@@ -273,13 +284,9 @@ func run(o options) error {
 	return finish(server, serveErr, trayErr)
 }
 
-// startApp builds the application layer over the real adapters and starts its
-// poller. The returned stop closes the application and then the SSH client,
-// in that order: the poller must stop asking before the connection goes.
-func startApp(ctx context.Context, o options) (*app.App, func()) {
-	tailnet := tailscale.New()
-	services := winsvc.New()
-	ssh := sshx.NewLazy(sshx.Config{
+// newSSH is the one connection to the peer this process keeps.
+func newSSH(o options) *sshx.Lazy {
+	return sshx.NewLazy(sshx.Config{
 		Addr:    o.peer.Addr,
 		User:    o.peer.User,
 		KeyPath: o.keyPath,
@@ -287,6 +294,15 @@ func startApp(ctx context.Context, o options) (*app.App, func()) {
 		// out-of-band channel to learn it from; a changed key is still refused.
 		TrustOnFirstUse: true,
 	})
+}
+
+// startApp builds the application layer over the real adapters and starts its
+// poller. The returned stop closes the application and then the SSH client,
+// in that order: the poller must stop asking before the connection goes.
+func startApp(ctx context.Context, o options) (*app.App, func()) {
+	tailnet := tailscale.New()
+	services := winsvc.New()
+	ssh := newSSH(o)
 
 	folder := wireFolder(o, ssh)
 	clip := wireClip(o, ssh)

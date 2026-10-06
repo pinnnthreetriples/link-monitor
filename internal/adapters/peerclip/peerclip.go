@@ -49,7 +49,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 
+	"github.com/pinnnthreetriples/link-monitor/internal/adapters/localendpoint"
 	"github.com/pinnnthreetriples/link-monitor/internal/core/clipshare"
 )
 
@@ -89,6 +91,11 @@ type Peer struct {
 	// address came out of a record on the peer's disk, which is validated as
 	// loopback before it is used — a redirect would be a way around that.
 	client *http.Client
+
+	// mu guards known: the last record confirmed by [Peer.Record], kept so
+	// that an item does not pay for a PowerShell start on the peer every time.
+	mu    sync.Mutex
+	known *localendpoint.Record
 }
 
 // New describes the peer's instance. name is what the UI calls that machine.
@@ -117,32 +124,7 @@ func (p *Peer) Name() string { return p.name }
 // the program has to be running on both machines, and that is a normal state
 // rather than a fault.
 func (p *Peer) Deliver(ctx context.Context, text []byte) error {
-	rec, err := p.Record(ctx)
-	if err != nil {
-		return err
-	}
-	port, err := rec.Port()
-	if err != nil {
-		return fmt.Errorf("reading %s's endpoint record: %w", p.name, err)
-	}
-
-	// Local port 0: the operating system picks one, the listener is on the
-	// loopback only, and it is closed as soon as this one item has gone.
-	tunnel, err := p.fwd.LocalForward(ctx, 0, loopback, port)
-	if err != nil {
-		return fmt.Errorf("forwarding %s's port %d: %w", p.name, port, err)
-	}
-	defer func() {
-		// Closing the tunnel cannot lose the item: the request above has
-		// already been answered, and there is nobody left to tell.
-		_ = tunnel.Close()
-	}()
-
-	addr, err := tunnelAddr(tunnel)
-	if err != nil {
-		return err
-	}
-	return p.post(ctx, addr, text)
+	return p.via(ctx, func(addr string) error { return p.post(ctx, addr, text) })
 }
 
 // tunnelAddr is the loopback address the forward is listening on, which is
