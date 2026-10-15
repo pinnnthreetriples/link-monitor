@@ -19,6 +19,10 @@ const (
 	// interval on purpose: a run that has not finished by the next tick would
 	// otherwise queue up behind itself.
 	DefaultProbeTimeout = 25 * time.Second
+
+	// DefaultConfirmDelay is how long the poller waits before looking a second
+	// time at a link that was fine a moment ago and now is not.
+	DefaultConfirmDelay = 2 * time.Second
 )
 
 // ErrPollerStopped means the poller is not running, so there is nobody to ask
@@ -42,6 +46,9 @@ type PollerConfig struct {
 	Timeout  time.Duration
 	// History, when set, gets one point per finished probe.
 	History *History
+	// ConfirmDelay is the pause before a second look at a link that just went
+	// from OK to anything else; zero means DefaultConfirmDelay.
+	ConfirmDelay time.Duration
 }
 
 // Poller runs the diagnosis on an interval and fans each result out to whoever
@@ -75,6 +82,9 @@ func NewPoller(cfg PollerConfig) *Poller {
 	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = DefaultProbeTimeout
+	}
+	if cfg.ConfirmDelay <= 0 {
+		cfg.ConfirmDelay = DefaultConfirmDelay
 	}
 	return &Poller{
 		cfg:    cfg,
@@ -137,15 +147,34 @@ func (p *Poller) loop(ctx context.Context) {
 func (p *Poller) runOnce(ctx context.Context) {
 	p.setChecking()
 
-	runCtx, cancel := context.WithTimeout(ctx, p.cfg.Timeout)
-	defer cancel()
-
-	snap, fixes := diagnose.Run(runCtx, p.cfg.Probe, p.cfg.Local, p.cfg.Peer)
+	snap, fixes := p.diagnose(ctx)
+	if snap.Overall != core.StateOK && p.lastWasOK() && sleepCtx(ctx, p.cfg.ConfirmDelay) == nil {
+		// A link that was fine a moment ago gets a second look before the
+		// tray turns red: one lost packet or one slow PowerShell start on the
+		// peer is not an outage, and saying it was one every few minutes is
+		// what made the program look broken. A real outage is reported one
+		// probe later than before, and only the first time.
+		snap, fixes = p.diagnose(ctx)
+	}
 	res := Result{Snapshot: snap, Fixes: fixes}
 	if p.cfg.History != nil {
 		p.cfg.History.Add(Point{At: snap.Taken, State: snap.Overall})
 	}
 	p.publish(res)
+}
+
+// diagnose runs the diagnosis once, under the probe timeout.
+func (p *Poller) diagnose(ctx context.Context) (core.Snapshot, []diagnose.Fix) {
+	runCtx, cancel := context.WithTimeout(ctx, p.cfg.Timeout)
+	defer cancel()
+	return diagnose.Run(runCtx, p.cfg.Probe, p.cfg.Local, p.cfg.Peer)
+}
+
+// lastWasOK reports whether the last published result said the link was up.
+func (p *Poller) lastWasOK() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.hasLatest && p.latest.Snapshot.Overall == core.StateOK
 }
 
 // setChecking flags a probe as in flight, so the UI can show a spinner.
@@ -297,4 +326,16 @@ func (p *Poller) Checking() bool {
 	defer p.mu.Unlock()
 
 	return p.checking
+}
+
+// sleepCtx waits for d, or less if ctx ends first, and says which happened.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }

@@ -37,6 +37,10 @@ const (
 	// unreachable. The first one often loses the race against path discovery.
 	defaultPingAttempts = 3
 	defaultPingBackoff  = 300 * time.Millisecond
+	// defaultPingTimeout bounds one attempt. A pong over a relay takes well
+	// under a second; three of these plus the backoff stay far inside the
+	// poller's 25-second budget for the whole diagnosis.
+	defaultPingTimeout = 3 * time.Second
 )
 
 // Daemon is the slice of the Tailscale LocalAPI this adapter uses.
@@ -99,6 +103,7 @@ type Client struct {
 
 	pingAttempts int
 	pingBackoff  time.Duration
+	pingTimeout  time.Duration
 	upTimeout    time.Duration
 }
 
@@ -140,6 +145,15 @@ func WithPingPolicy(attempts int, backoff time.Duration) Option {
 	}
 }
 
+// WithPingTimeout bounds one ping attempt. A value of zero or less is ignored.
+func WithPingTimeout(d time.Duration) Option {
+	return func(c *Client) {
+		if d > 0 {
+			c.pingTimeout = d
+		}
+	}
+}
+
 // WithUpTimeout bounds how long [Client.Up] waits for the daemon to reach a
 // running state. A value of zero or less is ignored.
 func WithUpTimeout(d time.Duration) Option {
@@ -159,6 +173,7 @@ func New(opts ...Option) *Client {
 		runner:       newExecRunner(DefaultExePath),
 		pingAttempts: defaultPingAttempts,
 		pingBackoff:  defaultPingBackoff,
+		pingTimeout:  defaultPingTimeout,
 		upTimeout:    defaultUpTimeout,
 	}
 	for _, opt := range opts {

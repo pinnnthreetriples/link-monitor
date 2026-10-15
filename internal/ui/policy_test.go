@@ -32,7 +32,7 @@ func TestPolicyNotifiesOnlyOnAChangeForTheWorse(t *testing.T) {
 	}{
 		{"ok to fail", core.StateOK, core.StateFail, true},
 		{"ok to warn", core.StateOK, core.StateWarn, true},
-		{"ok to unknown", core.StateOK, core.StateUnknown, true},
+		{"ok to unknown", core.StateOK, core.StateUnknown, false},
 		{"warn to fail", core.StateWarn, core.StateFail, true},
 		{"unknown to warn", core.StateUnknown, core.StateWarn, true},
 		{"fail to ok", core.StateFail, core.StateOK, false},

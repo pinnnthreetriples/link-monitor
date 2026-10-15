@@ -79,6 +79,9 @@ type Config struct {
 	// DialBackoff is how long Lazy refuses to dial again after a failed
 	// attempt. Zero means DefaultDialBackoff. Dial itself ignores it.
 	DialBackoff time.Duration
+	// KeepAlive is how often Lazy asks a held session whether the far end is
+	// still there. Zero means DefaultKeepAlive. Dial itself ignores it.
+	KeepAlive time.Duration
 }
 
 // withDefaults returns a copy with the optional fields filled in.
@@ -94,6 +97,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.DialBackoff <= 0 {
 		c.DialBackoff = DefaultDialBackoff
+	}
+	if c.KeepAlive <= 0 {
+		c.KeepAlive = DefaultKeepAlive
 	}
 	return c
 }

@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: "1.27.0"
+  GO_VERSION: "1.27.2"
 
 jobs:
   # The program is Windows-only — tray, services, WebView2. Testing it on Linux
@@ -105,11 +105,12 @@ jobs:
       # typechecking line is printed, "0 issues" is reported and the process
       # exits 7. v2.6.2 did exactly that against Go 1.27 ("export data version
       # 4 is greater than maximum supported version 2"), which is why this job
-      # had never once passed. When GO_VERSION moves, this must move with it.
+      # had never once passed. When GO_VERSION moves, this must move with it:
+      # v2.13.2 likewise cannot read Go 1.27.2 (export data version 5).
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.13.2
+          version: v2.14.0
 
       - name: go mod tidy leaves no diff
         run: |

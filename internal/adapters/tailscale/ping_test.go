@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -309,5 +310,59 @@ func TestSleepCtxReturnsAfterTheDelay(t *testing.T) {
 	cancel()
 	if err := sleepCtx(ctx, 0); !errors.Is(err, context.Canceled) {
 		t.Fatalf("sleepCtx(0) error = %v, want context.Canceled", err)
+	}
+}
+
+// hangingDaemon swallows the first hang pings: it answers only when the
+// attempt's context ends, the way the LocalAPI behaves when a disco packet is
+// lost on the way.
+type hangingDaemon struct {
+	*fakeDaemon
+	hang  int
+	calls atomic.Int32
+}
+
+func (h *hangingDaemon) Ping(ctx context.Context, ip netip.Addr, t tailcfg.PingType,
+) (*ipnstate.PingResult, error) {
+	if int(h.calls.Add(1)) <= h.hang {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return h.fakeDaemon.Ping(ctx, ip, t)
+}
+
+func TestALostPingIsRetriedInsteadOfEatingTheWholeBudget(t *testing.T) {
+	t.Parallel()
+	d := &hangingDaemon{fakeDaemon: &fakeDaemon{status: runningStatus(t)}, hang: 1}
+	c := New(WithDaemon(d), WithRunner(&fakeRunner{}), WithPingPolicy(3, 0),
+		WithPingTimeout(20*time.Millisecond))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	latency, err := c.PeerReachable(ctx, workAddr)
+	if err != nil {
+		t.Fatalf("PeerReachable() error = %v, want the second attempt to answer", err)
+	}
+	if latency <= 0 {
+		t.Errorf("latency = %v, want the second attempt's round trip", latency)
+	}
+	if got := d.calls.Load(); got != 2 {
+		t.Errorf("sent %d pings, want 2", got)
+	}
+}
+
+func TestPingsThatAllHangAreASilentPeer(t *testing.T) {
+	t.Parallel()
+	d := &hangingDaemon{fakeDaemon: &fakeDaemon{status: runningStatus(t)}, hang: 3}
+	c := New(WithDaemon(d), WithRunner(&fakeRunner{}), WithPingPolicy(3, 0),
+		WithPingTimeout(20*time.Millisecond))
+
+	_, err := c.PeerReachable(context.Background(), workAddr)
+	if !errors.Is(err, ErrPeerUnreachable) {
+		t.Fatalf("error = %v, want ErrPeerUnreachable", err)
+	}
+	var timedOut *core.TimeoutError
+	if !errors.As(err, &timedOut) {
+		t.Errorf("error = %v, want a *core.TimeoutError in the chain", err)
 	}
 }

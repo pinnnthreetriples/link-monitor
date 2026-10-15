@@ -306,6 +306,16 @@ func newSession(client *Client) *session {
 		_ = client.conn.Wait()
 		close(sess.dead)
 	}()
+	go keepAlive(sess.dead, client.cfg.KeepAlive, keepAliveTimeout, func() error {
+		// The far end's answer — even "unknown request" — proves it is there;
+		// only the error, which means the transport is gone, matters.
+		_, _, err := client.conn.SendRequest(keepAliveRequest, true, nil)
+		return err //nolint:wrapcheck // only nil-or-not is read, by keepAlive
+	}, func() {
+		// Closing a connection that has stopped answering is the point; the
+		// error would only say it was already half gone.
+		_ = client.Close()
+	})
 	return sess
 }
 
