@@ -42,7 +42,9 @@ type execRunner struct{}
 // -EncodedCommand rather than a command line. exec.CommandContext passes argv
 // as a vector, so no shell re-reads any of it.
 func (execRunner) run(ctx context.Context, name string, args ...string) error {
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput() //nolint:gosec // G204: see above
+	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // G204: see above
+	hideConsole(cmd)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if text := strings.TrimSpace(string(out)); text != "" {
 			return fmt.Errorf("running %s: %w: %s", name, err, text)

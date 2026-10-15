@@ -90,9 +90,27 @@ func (c *Client) pingUntilAnswered(ctx context.Context, addr string) (time.Durat
 }
 
 // pingOnce sends a single disco ping and reads the round-trip out of it.
+//
+// Each attempt has a deadline of its own. The LocalAPI waits for a pong for as
+// long as the context allows, so one lost disco packet used to consume the
+// whole diagnosis budget: the retries below never ran, every row went Unknown
+// and the tray flipped to «Состояние неизвестно» every few minutes on a link
+// that was fine. An attempt that runs out of its own time while the caller's
+// context is still alive is a silent peer, which is what gets retried.
 func (c *Client) pingOnce(ctx context.Context, ip netip.Addr) (time.Duration, error) {
-	res, err := c.daemon.Ping(ctx, ip, tailcfg.PingDisco)
+	limit := c.pingTimeout
+	if limit <= 0 {
+		limit = defaultPingTimeout
+	}
+	attemptCtx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+
+	res, err := c.daemon.Ping(attemptCtx, ip, tailcfg.PingDisco)
 	if err != nil {
+		if ctx.Err() == nil && attemptCtx.Err() != nil {
+			return 0, fmt.Errorf("tailscale ping %s: no answer within %v: %w", ip, limit,
+				ErrPeerUnreachable)
+		}
 		return 0, fmt.Errorf("tailscale ping %s: %w", ip, err)
 	}
 	switch {

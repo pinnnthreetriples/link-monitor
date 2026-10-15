@@ -17,6 +17,9 @@ const defaultDebounce = time.Minute
 // The rule, in order:
 //   - never on the first status after start: the tray has nothing to compare
 //     it to, and a program that shouts on launch gets muted;
+//   - never about Unknown: it means a check could not finish, not that the
+//     link is broken, and a toast saying so every time one probe ran late was
+//     the "то включена, то нет" the user complained about;
 //   - only when the state got worse, using the severity order core.State
 //     already defines (ok < unknown < warn < fail). Recovery is visible in the
 //     icon turning green and does not need a toast;
@@ -43,6 +46,8 @@ func (p *notifyPolicy) consider(now time.Time, st Status) bool {
 
 	switch {
 	case !seen:
+		return false
+	case st.Overall == core.StateUnknown:
 		return false
 	case st.Overall <= previous:
 		return false

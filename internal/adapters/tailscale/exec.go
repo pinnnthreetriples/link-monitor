@@ -79,6 +79,7 @@ func (r *execRunner) Run(ctx context.Context, args ...string) (CommandResult, er
 	//
 	//nolint:gosec // G702/G204: argv is built here from literals and a bounded int.
 	cmd := exec.CommandContext(ctx, exe, args...)
+	hideConsole(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
